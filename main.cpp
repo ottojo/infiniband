@@ -12,6 +12,7 @@
 #include "IBvMemoryRegion.hpp"
 #include "IBvException.hpp"
 #include "httpClient.hpp"
+#include "httpServer.hpp"
 
 enum class Role {
         Sender,
@@ -89,6 +90,13 @@ int main(int argc, char *argv[]) {
 
     fmt::print(FMT_STRING("Queue pair is in state {}\n"), queuePair.getState());
 
+    // Exchange info (out of band):
+    //  Local ID LID (assigned by subnet manager)
+    //  Queue Pair Number QPN (assigned by Host Channel Adapter HCA)
+    //  Packet Sequence Number PSN
+    //  Remote Key R_Key which allows peer to access local MR
+    //  Memory address VADDR for peer
+
     auto portAttr = context.queryPort(portNumber);
     ConnectionInfo myInfo{
             .localLID = portAttr.lid,
@@ -98,33 +106,20 @@ int main(int argc, char *argv[]) {
             .vaddr = 7};
 
     if (role == Role::Receiver) {
-        auto senderInfo = exchangeInfo("192.168.3.6", "1337", "/connectionInfo", myInfo);
+        // Receiver: Connect to server, send info, receive info
+        auto senderInfo = exchangeInfo("localhost", "1337", "/connectionInfo", myInfo);
         nlohmann::json s = senderInfo;
         fmt::print("Got remote info: {}\n", s.dump());
+        // TODO, Receiver: Change QP status to Ready to Receive RTR
     }
 
     if (role == Role::Sender) {
-
+        // Sender: Open server, receive info, reply info
+        auto receiverInfo = serveInfo(1337, myInfo);
+        nlohmann::json s = receiverInfo;
+        fmt::print("Got remote info: {}\n", s.dump());
+        // TODO, Sender: Change QP status to Ready To Send RTS
     }
 
-
-    // TODO: Exchange info (out of band):
-    //  Local ID LID (assigned by subnet manager)
-    //  Queue Pair Number QPN (assigned by Host Channel Adapter HCA)
-    //  Packet Sequence Number PSN
-    //  Remote Key R_Key which allows peer to access local MR
-    //  Memory address VADDR for peer
-
-    // TODO, Sender: Open server, receive info, reply info
-    // TODO, Receiver: Connect to server, send info, receive info
-
-    // TODO, Receiver: Change QP status to Ready to Receive RTR
-    // TODO, Sender: Change QP status to Ready To Send RTS
-
     // TODO: RDMA write
-
-
-
-
-    //ibv_post_send();
 }

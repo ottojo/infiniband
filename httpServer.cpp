@@ -9,36 +9,64 @@
 #include <boost/beast/version.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/config.hpp>
+#include <iostream>
+#include <fmt/core.h>
 
-ConnectionInfo serveInfo(const std::string &port, const std::string &path, ConnectionInfo myInfo) {
-/*
-    namespace beast = boost::beast;         // from <boost/beast.hpp>
-    namespace http = beast::http;           // from <boost/beast/http.hpp>
-    namespace net = boost::asio;            // from <boost/asio.hpp>
-    using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
+namespace beast = boost::beast;
+namespace http = beast::http;
+namespace net = boost::asio;
+using tcp = boost::asio::ip::tcp;
 
-    auto const address = net::ip::make_address(argv[1]);
-    auto const port = static_cast<unsigned short>(std::atoi(argv[2]));
-    auto const doc_root = std::make_shared<std::string>(argv[3]);
+void fail(beast::error_code ec, char const *what) {
+    std::cerr << what << ": " << ec.message() << "\n";
+    throw std::exception{};
+}
 
-    // The io_context is required for all I/O
+ConnectionInfo serveInfo(unsigned short port, ConnectionInfo myInfo) {
+
+    const auto address = net::ip::make_address("0.0.0.0");
+
     net::io_context ioc{1};
 
     // The acceptor receives incoming connections
     tcp::acceptor acceptor{ioc, {address, port}};
-    for (;;) {
-        // This will receive the new connection
-        tcp::socket socket{ioc};
+    // This will receive the new connection
+    tcp::socket socket{ioc};
 
-        // Block until we get a connection
-        acceptor.accept(socket);
+    // Block until we get a connection
+    acceptor.accept(socket);
 
-        // Launch the session, transferring ownership of the socket
-        std::thread{std::bind(
-                &do_session,
-                std::move(socket),
-                doc_root)}.detach();
+    // Launch the session, transferring ownership of the socket
+    beast::error_code ec;
+
+    // This buffer is required to persist across reads
+    beast::flat_buffer buffer;
+
+    // Read a request
+    http::request<http::string_body> req;
+    http::read(socket, buffer, req, ec);
+    if (ec) {
+        fail(ec, "read");
     }
-*/
-    return ConnectionInfo();
+
+
+    // Send the response
+    http::response<http::string_body> res{http::status::ok, req.version()};
+    res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+    res.set(http::field::content_type, "application/json");
+
+    nlohmann::json j = myInfo;
+    res.body() = j.dump();
+    res.prepare_payload();
+
+    http::serializer<false, http::string_body> sr{res};
+    http::write(socket, sr, ec);
+    if (ec) {
+        fail(ec, "write");
+    }
+
+    // Send a TCP shutdown
+    socket.shutdown(tcp::socket::shutdown_send, ec);
+    nlohmann::json theirInfoJson = nlohmann::json::parse(req.body());
+    return theirInfoJson.get<ConnectionInfo>();
 }

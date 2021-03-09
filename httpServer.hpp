@@ -8,7 +8,7 @@
 
 #include "ConnectionInfo.hpp"
 
-ConnectionInfo serveInfo(const std::string &port, const std::string &path, ConnectionInfo myInfo);
+ConnectionInfo serveInfo(unsigned short port, ConnectionInfo myInfo);
 
 
 #endif //INFINIBAND_HTTPSERVER_HPP

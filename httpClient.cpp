@@ -25,7 +25,8 @@ ConnectionInfo exchangeInfo(const std::string &host, const std::string &port, co
     req.set(http::field::host, host);
 
     nlohmann::json myInfoJson = myInfo;
-    req.body() = myInfoJson;
+    req.body() = myInfoJson.dump();
+    req.prepare_payload();
 
     http::write(stream, req);
 
@@ -35,7 +36,6 @@ ConnectionInfo exchangeInfo(const std::string &host, const std::string &port, co
 
     stream.socket().shutdown(tcp::socket::shutdown_both);
 
-    nlohmann::json theirInfoJson = res.body();
-
+    nlohmann::json theirInfoJson = nlohmann::json::parse(res.body());
     return theirInfoJson.get<ConnectionInfo>();
 }
