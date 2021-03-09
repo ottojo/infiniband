@@ -11,6 +11,7 @@
 #include "IBvCompletionEventChannel.hpp"
 #include "IBvCompletionQueue.hpp"
 #include "IBvQueuePair.hpp"
+#include "IBvMemoryRegion.hpp"
 
 void errCheck(int err) {
     if (err != 0) {
@@ -21,7 +22,6 @@ void errCheck(int err) {
 
 int main() {
     auto deviceList = IBvDeviceList();
-
     fmt::print("Found {} devices\n", deviceList.size());
     if (deviceList.empty()) {
         return 0;
@@ -56,23 +56,13 @@ int main() {
 
     // Allocate protection domain
     auto protectionDomain = IBvProtectionDomain(context);
-
     fmt::print(FMT_STRING("Allocated protaction domain {}\n"), protectionDomain.get()->handle);
 
     // Register memory region MR
-    std::vector<double> memoryRegionVector(1000, 0.0);
-    auto memoryRegion = ibv_reg_mr(protectionDomain.get(), static_cast<void *>(memoryRegionVector.data()),
-                                   memoryRegionVector.size() * sizeof(decltype(memoryRegionVector)::value_type),
-                                   IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_WRITE);
-    if (memoryRegion == nullptr) {
-        throw std::runtime_error("Registering memory region failed");
-    }
-    auto mr_final = gsl::finally([&memoryRegion]() {
-        errCheck(ibv_dereg_mr(memoryRegion));
-    });
-
+    auto memoryRegion = IBvMemoryRegion<double>(1000, protectionDomain);
     fmt::print(FMT_STRING("Registered memory region {} at address {} with size {} and LKey {}, RKey {}\n"),
-               memoryRegion->handle, memoryRegion->addr, memoryRegion->length, memoryRegion->lkey, memoryRegion->rkey);
+               memoryRegion.get()->handle, memoryRegion.get()->addr, memoryRegion.get()->length,
+               memoryRegion.get()->lkey, memoryRegion.get()->rkey);
 
     // Create send and receive completion queue
     auto completionEventChannel = IBvCompletionEventChannel(context);
@@ -86,9 +76,8 @@ int main() {
     fmt::print(FMT_STRING("Created queue pair {}, state {}\n"), queuePair.get()->handle, queuePair.getState());
 
 
-
-    // TODO: Initialize queue pair (queue state should be INIT), for our Reliable Connected QP this also means
-    //  establishing the connection
+    // Initialize queue pair (queue state should be INIT), for our Reliable Connected QP this also means establishing
+    //  the connection
 
     // QP state: RESET -> INIT
     queuePair.initialize(portNumber);
@@ -97,6 +86,8 @@ int main() {
         fmt::print(FMT_STRING("Queue pair is in state {}\n"), state);
         Expects(state == IBV_QPS_INIT);
     }
+    //auto portAttr = context.queryPort(portNumber);
+
 
     // TODO: Exchange info (out of band):
     //  Local ID LID (assigned by subnet manager)
