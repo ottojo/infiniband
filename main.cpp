@@ -8,6 +8,7 @@
 #include <gsl/gsl>
 #include "libibverbs_format.hpp"
 #include "IBvProtectionDomain.hpp"
+#include "IBvCompletionEventChannel.hpp"
 
 void errCheck(int err) {
     if (err != 0) {
@@ -72,17 +73,14 @@ int main() {
                memoryRegion->handle, memoryRegion->addr, memoryRegion->length, memoryRegion->lkey, memoryRegion->rkey);
 
     // Create send and receive completion queue
-    auto completionEventChannel = ibv_create_comp_channel(context.get());
-    auto cec_finally = gsl::finally([&completionEventChannel]() {
-        errCheck(ibv_destroy_comp_channel(completionEventChannel));
-    });
+    auto completionEventChannel = IBvCompletionEventChannel(context);
 
-    auto sendCompletionQueue = ibv_create_cq(context.get(), 100, nullptr, completionEventChannel, 0);
+    auto sendCompletionQueue = ibv_create_cq(context.get(), 100, nullptr, completionEventChannel.get(), 0);
     auto sendQC_finally = gsl::finally([&sendCompletionQueue]() {
         errCheck(ibv_destroy_cq(sendCompletionQueue));
     });
 
-    auto recvCompletionQueue = ibv_create_cq(context.get(), 100, nullptr, completionEventChannel, 0);
+    auto recvCompletionQueue = ibv_create_cq(context.get(), 100, nullptr, completionEventChannel.get(), 0);
     auto recvCQ_finally = gsl::finally([&recvCompletionQueue]() {
         errCheck(ibv_destroy_cq(recvCompletionQueue));
     });
