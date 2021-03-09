@@ -10,6 +10,7 @@
 #include "IBvProtectionDomain.hpp"
 #include "IBvCompletionEventChannel.hpp"
 #include "IBvCompletionQueue.hpp"
+#include "IBvQueuePair.hpp"
 
 void errCheck(int err) {
     if (err != 0) {
@@ -81,29 +82,8 @@ int main() {
     auto recvCompletionQueue = IBvCompletionQueue(context, 100, completionEventChannel, 0);
 
     // Create queue pair QP
-    struct ibv_qp_init_attr initialQueuePairAttributes{
-            .qp_context = context.get(),
-            .send_cq = sendCompletionQueue.get(),
-            .recv_cq = recvCompletionQueue.get(),
-            .srq = nullptr,
-            .cap = {
-                    .max_send_wr=2,
-                    .max_recv_wr=2,
-                    .max_send_sge=1, // TODO: learn about scatter/gather elements
-                    .max_recv_sge=1,
-                    .max_inline_data=0
-            },
-            .qp_type = IBV_QPT_RC, // Reliable Connected
-            .sq_sig_all = 0,
-    };
-    auto queuePair = ibv_create_qp(protectionDomain.get(), &initialQueuePairAttributes);
-    if (queuePair == nullptr) {
-        throw std::runtime_error("Creating queue pair failed");
-    }
-    auto qp_finally = gsl::finally([&queuePair]() {
-        ibv_destroy_qp(queuePair);
-    });
-    fmt::print(FMT_STRING("Created queue pair {}, state {}\n"), queuePair->handle, queuePair->state);
+    auto queuePair = IBvQueuePair(protectionDomain, sendCompletionQueue, recvCompletionQueue);
+    fmt::print(FMT_STRING("Created queue pair {}, state {}\n"), queuePair.get()->handle, queuePair.getState());
 
 
 
@@ -111,23 +91,11 @@ int main() {
     //  establishing the connection
 
     // QP state: RESET -> INIT
-    struct ibv_qp_attr queuePairAttributes{
-            .qp_state = IBV_QPS_INIT, // Required for IBV_QP_STATE
-            .qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
-                               IBV_ACCESS_REMOTE_ATOMIC, // Required for IBV_QP_ACCESS_FLAGS
-            .pkey_index = 0, // Required for IBV_QP_PKEY_INDEX
-            .port_num = portNumber, // Required for IBV_QP_PORT
-    };
-    errCheck(ibv_modify_qp(queuePair,
-                           &queuePairAttributes,
-                           IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS));
-
+    queuePair.initialize(portNumber);
     {
-        struct ibv_qp_attr attr{};
-        struct ibv_qp_init_attr initAttr{};
-        ibv_query_qp(queuePair, &attr, IBV_QP_STATE, &initAttr);
-        fmt::print(FMT_STRING("Queue pair is in state {}\n"), attr.qp_state);
-        Expects(attr.qp_state == IBV_QPS_INIT);
+        auto state = queuePair.getState();
+        fmt::print(FMT_STRING("Queue pair is in state {}\n"), state);
+        Expects(state == IBV_QPS_INIT);
     }
 
     // TODO: Exchange info (out of band):
