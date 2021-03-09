@@ -5,9 +5,10 @@
  * Description here TODO
  */
 
+#include <gsl/gsl>
 #include <infiniband/verbs.h>
 #include "IBvContext.hpp"
-#include <gsl/gsl>
+#include "IBvException.hpp"
 
 IBvContext::IBvContext(struct ibv_device *device) {
     context = ibv_open_device(device);
@@ -31,9 +32,6 @@ struct ibv_device_attr IBvContext::queryAttributes() {
 struct ibv_port_attr IBvContext::queryPort(int port) {
     struct ibv_port_attr attr{};
     auto error = ibv_query_port(context, port, &attr);
-    if (error != 0) {
-        // TODO: find out how to convert error codes to string
-        throw std::runtime_error{strerror(error)};
-    }
+    throwIfError(error);
     return attr;
 }
