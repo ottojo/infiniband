@@ -9,6 +9,7 @@
 #include "libibverbs_format.hpp"
 #include "IBvProtectionDomain.hpp"
 #include "IBvCompletionEventChannel.hpp"
+#include "IBvCompletionQueue.hpp"
 
 void errCheck(int err) {
     if (err != 0) {
@@ -75,21 +76,15 @@ int main() {
     // Create send and receive completion queue
     auto completionEventChannel = IBvCompletionEventChannel(context);
 
-    auto sendCompletionQueue = ibv_create_cq(context.get(), 100, nullptr, completionEventChannel.get(), 0);
-    auto sendQC_finally = gsl::finally([&sendCompletionQueue]() {
-        errCheck(ibv_destroy_cq(sendCompletionQueue));
-    });
+    auto sendCompletionQueue = IBvCompletionQueue(context, 100, completionEventChannel, 0);
 
-    auto recvCompletionQueue = ibv_create_cq(context.get(), 100, nullptr, completionEventChannel.get(), 0);
-    auto recvCQ_finally = gsl::finally([&recvCompletionQueue]() {
-        errCheck(ibv_destroy_cq(recvCompletionQueue));
-    });
+    auto recvCompletionQueue = IBvCompletionQueue(context, 100, completionEventChannel, 0);
 
     // Create queue pair QP
     struct ibv_qp_init_attr initialQueuePairAttributes{
             .qp_context = context.get(),
-            .send_cq = sendCompletionQueue,
-            .recv_cq = recvCompletionQueue,
+            .send_cq = sendCompletionQueue.get(),
+            .recv_cq = recvCompletionQueue.get(),
             .srq = nullptr,
             .cap = {
                     .max_send_wr=2,
