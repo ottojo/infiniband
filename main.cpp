@@ -1,10 +1,8 @@
 #include <iostream>
 #include <infiniband/verbs.h>
-#include <infiniband/ib.h>
 #include "IBvDeviceList.hpp"
 #include "IBvContext.hpp"
 #include <fmt/format.h>
-#include <vector>
 #include <gsl/gsl>
 #include "libibverbs_format.hpp"
 #include "IBvProtectionDomain.hpp"
@@ -12,21 +10,30 @@
 #include "IBvCompletionQueue.hpp"
 #include "IBvQueuePair.hpp"
 #include "IBvMemoryRegion.hpp"
+#include "IBvException.hpp"
+#include "httpClient.hpp"
 
-void errCheck(int err) {
-    if (err != 0) {
-        fmt::print("Error {}: {}\n", err, strerror(err));
-        throw std::runtime_error{strerror(err)};
+enum class Role {
+        Sender,
+        Receiver
+};
+
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        fmt::print("Not enough arguments. Specify sender or receiver\n");
+        return 1;
     }
-}
 
-int main() {
+    auto role = Role::Receiver;
+    if (std::string{argv[1]} == "sender") {
+        role = Role::Sender;
+    }
+
     auto deviceList = IBvDeviceList();
     fmt::print("Found {} devices\n", deviceList.size());
     if (deviceList.empty()) {
         return 0;
     }
-
 
     for (const auto d:deviceList) {
         fmt::print(FMT_STRING("Name: {}, dev name: {}, device name: {}, GUID: {}, node type: {}\n"),
@@ -44,7 +51,7 @@ int main() {
         // auto portAttributes = context.queryPort(p);
         ibv_gid guid{};
         auto err = ibv_query_gid(context.get(), p, 0, &guid);
-        errCheck(err);
+        throwIfError(err);
 
         fmt::print("Port {} has GUID: (subnet-prefix: {}, interface-id: {})\n",
                    p,
@@ -78,15 +85,27 @@ int main() {
 
     // Initialize queue pair (queue state should be INIT), for our Reliable Connected QP this also means establishing
     //  the connection
-
-    // QP state: RESET -> INIT
     queuePair.initialize(portNumber);
-    {
-        auto state = queuePair.getState();
-        fmt::print(FMT_STRING("Queue pair is in state {}\n"), state);
-        Expects(state == IBV_QPS_INIT);
+
+    fmt::print(FMT_STRING("Queue pair is in state {}\n"), queuePair.getState());
+
+    auto portAttr = context.queryPort(portNumber);
+    ConnectionInfo myInfo{
+            .localLID = portAttr.lid,
+            .queuePairNumber = queuePair.get()->qp_num,
+            .packetSequenceNumber = 0,
+            .remoteKey = memoryRegion.get()->rkey,
+            .vaddr = 7};
+
+    if (role == Role::Receiver) {
+        auto senderInfo = exchangeInfo("192.168.3.6", "1337", "/connectionInfo", myInfo);
+        nlohmann::json s = senderInfo;
+        fmt::print("Got remote info: {}\n", s.dump());
     }
-    //auto portAttr = context.queryPort(portNumber);
+
+    if (role == Role::Sender) {
+
+    }
 
 
     // TODO: Exchange info (out of band):
@@ -96,8 +115,11 @@ int main() {
     //  Remote Key R_Key which allows peer to access local MR
     //  Memory address VADDR for peer
 
-    // TODO: Change QP status to Ready to Receive RTR
-    // TODO, Server: Change QP status to Ready To Send RTS
+    // TODO, Sender: Open server, receive info, reply info
+    // TODO, Receiver: Connect to server, send info, receive info
+
+    // TODO, Receiver: Change QP status to Ready to Receive RTR
+    // TODO, Sender: Change QP status to Ready To Send RTS
 
     // TODO: RDMA write
 
