@@ -7,6 +7,7 @@
 #include <vector>
 #include <gsl/gsl>
 #include "libibverbs_format.hpp"
+#include "IBvProtectionDomain.hpp"
 
 void errCheck(int err) {
     if (err != 0) {
@@ -51,19 +52,13 @@ int main() {
     uint8_t portNumber = 1;
 
     // Allocate protection domain
-    auto protectionDomain = ibv_alloc_pd(context.get());
-    if (protectionDomain == nullptr) {
-        throw std::runtime_error("Allocating protection domain failed");
-    }
-    auto pd_final = gsl::finally([&protectionDomain]() {
-        errCheck(ibv_dealloc_pd(protectionDomain));
-    });
+    auto protectionDomain = IBvProtectionDomain(context);
 
-    fmt::print(FMT_STRING("Allocated protaction domain {}\n"), protectionDomain->handle);
+    fmt::print(FMT_STRING("Allocated protaction domain {}\n"), protectionDomain.get()->handle);
 
     // Register memory region MR
     std::vector<double> memoryRegionVector(1000, 0.0);
-    auto memoryRegion = ibv_reg_mr(protectionDomain, static_cast<void *>(memoryRegionVector.data()),
+    auto memoryRegion = ibv_reg_mr(protectionDomain.get(), static_cast<void *>(memoryRegionVector.data()),
                                    memoryRegionVector.size() * sizeof(decltype(memoryRegionVector)::value_type),
                                    IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_WRITE);
     if (memoryRegion == nullptr) {
@@ -108,7 +103,7 @@ int main() {
             .qp_type = IBV_QPT_RC, // Reliable Connected
             .sq_sig_all = 0,
     };
-    auto queuePair = ibv_create_qp(protectionDomain, &initialQueuePairAttributes);
+    auto queuePair = ibv_create_qp(protectionDomain.get(), &initialQueuePairAttributes);
     if (queuePair == nullptr) {
         throw std::runtime_error("Creating queue pair failed");
     }
