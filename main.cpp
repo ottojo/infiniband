@@ -37,7 +37,7 @@ int main() {
 
     auto attributes = context.queryAttributes();
     for (int p = 1; p < attributes.phys_port_cnt + 1; p++) {
-        auto portAttributes = context.queryPort(p);
+        // auto portAttributes = context.queryPort(p);
         ibv_gid guid{};
         auto err = ibv_query_gid(context.get(), p, 0, &guid);
         errCheck(err);
@@ -47,6 +47,8 @@ int main() {
                    guid.global.subnet_prefix,
                    guid.global.interface_id);
     }
+    Expects(attributes.phys_port_cnt > 0);
+    uint8_t portNumber = 1;
 
     // Allocate protection domain
     auto protectionDomain = ibv_alloc_pd(context.get());
@@ -100,9 +102,10 @@ int main() {
                     .max_send_wr=2,
                     .max_recv_wr=2,
                     .max_send_sge=1, // TODO: learn about scatter/gather elements
-                    .max_recv_sge=1
+                    .max_recv_sge=1,
+                    .max_inline_data=0
             },
-            .qp_type = IBV_QPT_RC,
+            .qp_type = IBV_QPT_RC, // Reliable Connected
             .sq_sig_all = 0,
     };
     auto queuePair = ibv_create_qp(protectionDomain, &initialQueuePairAttributes);
@@ -116,12 +119,28 @@ int main() {
 
 
 
-    // TODO: Initialize queue pair (queue state should be INIT)
-    struct ibv_qp_attr queuePairAttributes {
+    // TODO: Initialize queue pair (queue state should be INIT), for our Reliable Connected QP this also means
+    //  establishing the connection
 
+    // QP state: RESET -> INIT
+    struct ibv_qp_attr queuePairAttributes{
+            .qp_state = IBV_QPS_INIT, // Required for IBV_QP_STATE
+            .qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
+                               IBV_ACCESS_REMOTE_ATOMIC, // Required for IBV_QP_ACCESS_FLAGS
+            .pkey_index = 0, // Required for IBV_QP_PKEY_INDEX
+            .port_num = portNumber, // Required for IBV_QP_PORT
     };
-    //ibv_modify_qp(queuePair, ,0);
+    errCheck(ibv_modify_qp(queuePair,
+                           &queuePairAttributes,
+                           IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS));
 
+    {
+        struct ibv_qp_attr attr{};
+        struct ibv_qp_init_attr initAttr{};
+        ibv_query_qp(queuePair, &attr, IBV_QP_STATE, &initAttr);
+        fmt::print(FMT_STRING("Queue pair is in state {}\n"), attr.qp_state);
+        Expects(attr.qp_state == IBV_QPS_INIT);
+    }
 
     // TODO: Exchange info (out of band):
     //  Local ID LID (assigned by subnet manager)

@@ -13,3 +13,4 @@ find_package(Boost REQUIRED) # stlinterfaces
 
 add_executable(infiniband main.cpp IBvContext.cpp IBvDeviceList.cpp libibverbs_format.hpp)
 target_link_libraries(infiniband IBVerbs::verbs fmt::fmt Microsoft.GSL::GSL)
+target_compile_options(infiniband PRIVATE -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers)
