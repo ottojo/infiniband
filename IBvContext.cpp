@@ -15,8 +15,11 @@ IBvContext::IBvContext(struct ibv_device *device) {
     Expects(context != nullptr);
 }
 
+IBvContext::IBvContext(struct ibv_context *c) : context(c) {}
+
 IBvContext::~IBvContext() {
-    ibv_close_device(context);
+    // ibv_close_device(context); // TODO FIX: This class is currently used both as the owner of a context and as a wrapper
+    //                                around a context we get from librdmacm. Maybe the first usecase is not required?
 }
 
 struct ibv_context *IBvContext::get() {

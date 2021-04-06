@@ -52,7 +52,7 @@ class IBvMemoryRegion {
 
     private:
         std::size_t s;
-        std::shared_ptr<T[]> d;
+        std::shared_ptr<T[]> d; // TODO: ibv_mr has this data
         struct ibv_mr *mr;
 };
 

@@ -10,6 +10,9 @@
 #include "IBvProtectionDomain.hpp"
 #include "IBvCompletionQueue.hpp"
 
+// TODO: librdmacm provides rdma_create_qp, which also requires initial QP attributes and automatically transitions it
+//  to send and receive state
+
 /**
  * Queue pair, currently supports only "Reliable Connected" type
  */

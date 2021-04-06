@@ -13,6 +13,8 @@ class IBvContext {
     public:
         explicit IBvContext(struct ibv_device *);
 
+        explicit IBvContext(struct ibv_context *c);
+
         IBvContext(const IBvContext &) = delete;
 
         IBvContext &operator=(const IBvContext &) = delete;

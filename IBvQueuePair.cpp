@@ -18,7 +18,7 @@ IBvQueuePair::IBvQueuePair(IBvProtectionDomain &pd, IBvCompletionQueue &sendQC, 
                     .max_recv_sge=1,
                     .max_inline_data=0
             },
-            .qp_type = IBV_QPT_RC, // Reliable Connected
+            .qp_type = IBV_QPT_UD, // Unreliable Datagram
             .sq_sig_all = 0,
     };
     qp = ibv_create_qp(pd.get(), &initialQueuePairAttributes);
@@ -48,14 +48,13 @@ void IBvQueuePair::initialize(uint8_t port) {
     // QP state: RESET -> INIT
     struct ibv_qp_attr queuePairAttributes{
             .qp_state = IBV_QPS_INIT, // Required for IBV_QP_STATE
-            .qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
-                               IBV_ACCESS_REMOTE_ATOMIC, // Required for IBV_QP_ACCESS_FLAGS
+            .qkey = 0x22222222, // Required for IBV_QP_QKEY
             .pkey_index = 0, // Required for IBV_QP_PKEY_INDEX
             .port_num = port, // Required for IBV_QP_PORT
     };
     throwIfError(ibv_modify_qp(qp,
                                &queuePairAttributes,
-                               IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS));
+                               IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_QKEY));
 
     Ensures(getState() == IBV_QPS_INIT);
 }
