@@ -20,7 +20,7 @@ class IBvMemoryRegion {
                            pd.get(),
                            static_cast<void *>(d.get()),
                            size * sizeof(T),
-                           IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_WRITE)) {
+                           IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE)) {
             if (mr == nullptr) {
                 throw std::runtime_error("Registering memory region failed");
             }
@@ -46,6 +46,14 @@ class IBvMemoryRegion {
             return s;
         }
 
+        [[nodiscard]] std::size_t elementSize() const {
+            return sizeof(T);
+        }
+
+        [[nodiscard]] uint32_t lkey() const {
+            return mr->lkey;
+        }
+
         struct ibv_mr *get() {
             return mr;
         }
@@ -53,7 +61,7 @@ class IBvMemoryRegion {
     private:
         std::size_t s;
         std::shared_ptr<T[]> d; // TODO: ibv_mr has this data
-        struct ibv_mr *mr;
+        gsl::owner<ibv_mr *> mr;
 };
 
 

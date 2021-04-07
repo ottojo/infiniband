@@ -20,10 +20,10 @@ class IBvProtectionDomain {
 
         ~IBvProtectionDomain();
 
-        struct ibv_pd *get();
+        ibv_pd *get();
 
     private:
-        gsl::owner<struct ibv_pd *> pd;
+        gsl::owner<ibv_pd *> pd;
 };
 
 

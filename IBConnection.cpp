@@ -4,10 +4,16 @@
 
 #include "IBConnection.h"
 
-IBConnection::IBConnection(struct ibv_context *ctx) :
-        rdmaContext(ctx),
-        rdmaProtectionDomain(rdmaContext),
-        rdmaCompletionEventChannel(rdmaContext),
-        rdmaCompletionQueue(rdmaContext, 10, rdmaCompletionEventChannel, 0) {
-    ibv_req_notify_cq(rdmaCompletionQueue.get(), 0); // TODO: what happens here? ->CQ class?
+ibv_qp *IBConnection::rdma_qp(rdma_cm_id *id, ibv_cq *cq, ibv_pd *pd) {
+    ibv_qp_init_attr qp_attr{};
+    qp_attr.send_cq = cq;
+    qp_attr.recv_cq = cq;
+    qp_attr.qp_type = IBV_QPT_RC;
+    qp_attr.cap.max_send_wr = 10;
+    qp_attr.cap.max_recv_wr = 10;
+    qp_attr.cap.max_send_sge = 1;
+    qp_attr.cap.max_recv_sge = 1;
+
+    throwIfErrorErrno(rdma_create_qp(id, pd, &qp_attr));
+    return id->qp;
 }

@@ -15,6 +15,6 @@ IBvProtectionDomain::~IBvProtectionDomain() {
     ibv_dealloc_pd(pd);
 }
 
-struct ibv_pd *IBvProtectionDomain::get() {
+ibv_pd *IBvProtectionDomain::get() {
     return pd;
 }

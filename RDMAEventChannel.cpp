@@ -3,10 +3,15 @@
 //
 
 #include "RDMAEventChannel.h"
+#include "RDMACmID.hpp"
 
 void RDMAEventChannel::listen() {
-    struct rdma_cm_event *event = nullptr;
+    // Create the ID. We dont really need that one here, but each event contains a pointer to it...
+    // TODO: find out what happens if we listen to events without an ID existing, and if we really dont need it to start
+    //  listening
+    RDMACmID id(*this);
 
+    struct rdma_cm_event *event = nullptr;
     while (rdma_get_cm_event(ec, &event) == 0) {
         struct rdma_cm_event event_copy = *event;
         rdma_ack_cm_event(event);
@@ -17,6 +22,9 @@ void RDMAEventChannel::listen() {
 }
 
 RDMAEventChannel::~RDMAEventChannel() {
-    rdma_destroy_id(listener);
     rdma_destroy_event_channel(ec);
+}
+
+rdma_event_channel *RDMAEventChannel::get() {
+    return ec;
 }

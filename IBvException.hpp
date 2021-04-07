@@ -25,5 +25,10 @@ inline void throwIfError(int error) {
     }
 }
 
+inline void throwIfErrorErrno(int error){
+    if (error != 0) {
+        throw IBvException(errno);
+    }
+}
 
 #endif //INFINIBAND_IBVEXCEPTION_HPP
