@@ -47,8 +47,9 @@ int main(int argc, char *argv[]) {
                         // bound to a specific device. The connection request already has a valid ibverbs context at
                         // event.id->verbs
                         if (not connection.has_value()) {
-                            connection.emplace(event.id, [](const ibv_wc &) {
+                            connection.emplace(event.id, [](const ibv_wc &wc) {
                                 // TODO on completion
+                                fmt::print("Received work completion: {}\n", wc.wr_id);
                                 return false;
                             });
                         } else if (connection->rdmaContext.get() != event.id->verbs) {
@@ -87,6 +88,7 @@ int main(int argc, char *argv[]) {
 
                     } else if (event.event == RDMA_CM_EVENT_DISCONNECTED) {
                         fmt::print("disconnected event\n");
+
                         // Stop listening
                         return true;
                     }

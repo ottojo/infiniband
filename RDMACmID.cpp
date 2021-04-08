@@ -16,5 +16,6 @@ RDMACmID::RDMACmID(RDMAEventChannel &ec) {
 }
 
 RDMACmID::~RDMACmID() {
+    // TODO: "Users must destroy any QP associated with an rdma_cm_id before destroying the ID."
     rdma_destroy_id(rdmaId);
 }

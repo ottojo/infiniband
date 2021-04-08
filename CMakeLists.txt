@@ -13,6 +13,12 @@ find_package(Boost REQUIRED) # stlinterfaces
 find_library(RDMACM rdmacm REQUIRED)
 
 add_executable(infiniband main.cpp IBvContext.cpp IBvDeviceList.cpp libibverbs_format.hpp IBvProtectionDomain.cpp IBvCompletionQueue.cpp IBvCompletionQueue.hpp IBvCompletionEventChannel.cpp IBvCompletionEventChannel.hpp QueuePair.cpp QueuePair.hpp IBvException.cpp IBvException.hpp IBvMemoryRegion.hpp RDMAEventChannel.cpp RDMAEventChannel.h IBConnection.cpp IBConnection.h RDMACmID.cpp RDMACmID.hpp)
-target_link_libraries(infiniband IBVerbs::verbs fmt::fmt Microsoft.GSL::GSL pthread rdmacm)
+target_link_libraries(infiniband PRIVATE IBVerbs::verbs fmt::fmt Microsoft.GSL::GSL pthread rdmacm)
 target_compile_options(infiniband PRIVATE -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers)
-target_include_directories(infiniband SYSTEM PRIVATE external/json/include)
+
+add_executable(rdmaTestServer rdmaTestServer.main.cpp)
+target_link_libraries(rdmaTestServer PRIVATE fmt::fmt IBVerbs::verbs pthread rdmacm)
+
+
+add_executable(rdmaTestClient rdmaTestClient.main.cpp)
+target_link_libraries(rdmaTestClient PRIVATE fmt::fmt IBVerbs::verbs pthread rdmacm)
