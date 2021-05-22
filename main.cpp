@@ -28,11 +28,11 @@ int main(int argc, char *argv[]) {
 
     if (role == Role::Server) {
 
-        // This contains all the state that forms a "connection", such as completion queues
+        // This contains all the state that forms a "ServerConnection", such as completion queues
         std::optional<IBConnection> connection;
 
         // Create an event channel. Everything interesting happens when some event occurs.
-        // The event channel binds to a port (TCP/IP? Or also IB? Both?) to exchange connection information
+        // The event channel binds to a port (TCP/IP? Or also IB? Both?) to exchange ServerConnection information
         RDMAEventChannel ec(
                 [&connection]
                         (const struct rdma_cm_event &event) {
@@ -43,8 +43,8 @@ int main(int argc, char *argv[]) {
                     if (event.event == RDMA_CM_EVENT_CONNECT_REQUEST) {
                         fmt::print("connect request event\n");
 
-                        // We build the context etc once we receive the first connection request, since that will be
-                        // bound to a specific device. The connection request already has a valid ibverbs context at
+                        // We build the Context etc once we receive the first ServerConnection request, since that will be
+                        // bound to a specific device. The ServerConnection request already has a valid ibverbs Context at
                         // event.id->verbs
                         if (not connection.has_value()) {
                             connection.emplace(event.id, [](const ibv_wc &wc) {
@@ -53,12 +53,12 @@ int main(int argc, char *argv[]) {
                                 return false;
                             });
                         } else if (connection->rdmaContext.get() != event.id->verbs) {
-                            throw std::runtime_error{"Event from different context?"};
+                            throw std::runtime_error{"Event from different Context?"};
                         }
 
                         //  http://www.hpcadvisorycouncil.com/pdf/building-an-rdma-capable-application-with-ib-verbs.pdf
 
-                        // Store that connection with the ID
+                        // Store that ServerConnection with the ID
                         event.id->context = &connection;
 
                         // Pre-post receives (receive WRs): The underlying hardware wont buffer incoming messages: If a
@@ -72,7 +72,7 @@ int main(int argc, char *argv[]) {
                         sge.lkey = connection->recv_mr.lkey();
 
                         ibv_recv_wr wr{};
-                        wr.wr_id = reinterpret_cast<uint64_t>(&connection); // User defined. Tutorial stores &connection, lets see if that is important later
+                        wr.wr_id = reinterpret_cast<uint64_t>(&connection); // User defined. Tutorial stores &ServerConnection, lets see if that is important later
                         wr.next = nullptr; // This is technically a linked list of WRs
                         wr.sg_list = &sge;
                         wr.num_sge = 1;

@@ -3,43 +3,36 @@
 //
 
 #include <fmt/format.h>
+
 #include <rdma/rdma_cma.h>
 #include <thread>
-#include <unistd.h>
 #include <netdb.h>
+#include <opencv2/opencv.hpp>
 
-constexpr auto BUFFER_SIZE = 1024;
+#include "rdmaLib.hpp"
 
-struct connection {
-    rdma_cm_id *id;
-    ibv_qp *qp;
-    ibv_mr *send_mr;
-    ibv_mr *recv_mr;
-    char *recv_region;
-    char *send_region;
-    int num_completions;
-};
+std::chrono::high_resolution_clock::time_point sendTime;
 
-struct context {
-    ibv_context *ctx;
-    ibv_pd *pd;
-    ibv_cq *cq;
-    ibv_comp_channel *comp_channel;
+Context *global_ctx = nullptr;
 
-    std::thread cq_poller_thread;
-};
-
-context *s_ctx = nullptr;
-
-void on_completion(ibv_wc *wc) {
-    if (wc->status != IBV_WC_SUCCESS) {
+void on_completion(const ibv_wc &wc) {
+    if (wc.status != IBV_WC_SUCCESS) {
         throw std::runtime_error{"on_complation: status is not success"};
     }
 
-    auto *conn = reinterpret_cast<connection *>(wc->wr_id);
-    if (wc->opcode == IBV_WC_RECV) { // TODO: Tutorial tests with &, but this is an enum and not binary flags?
-        fmt::print("Received message: \"{}\"\n", conn->recv_region);
-    } else if (wc->opcode == IBV_WC_SEND) {
+    auto *conn = reinterpret_cast<ClientConnection *>(wc.wr_id);
+    if (wc.opcode == IBV_WC_RECV) { // TODO: Tutorial tests with &, but this is an enum and not binary flags?
+
+        auto time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - sendTime);
+        fmt::print("Received message after {}ms\n", time.count());
+
+        cv::Mat inputMatrix(HEIGHT, WIDTH, CV_8UC1, (void *) conn->recv_region);
+
+        cv::imshow("circle", inputMatrix);
+        while (cv::waitKey(1) != 27);
+
+
+    } else if (wc.opcode == IBV_WC_SEND) {
         fmt::print("Send completed successfully\n");
     }
     conn->num_completions++;
@@ -48,7 +41,7 @@ void on_completion(ibv_wc *wc) {
     }
 }
 
-[[noreturn]] void poll_cq() {
+[[noreturn]] void poll_cq(Context *s_ctx) {
     ibv_cq *cq;
     void *ctx = nullptr;
     while (true) {
@@ -57,60 +50,42 @@ void on_completion(ibv_wc *wc) {
         ibv_req_notify_cq(cq, 0);
         ibv_wc wc{};
         while (ibv_poll_cq(cq, 1, &wc)) {
-            on_completion(&wc);
+            on_completion(wc);
         }
     }
 }
 
-void build_context(ibv_context *verbs) {
-    if (s_ctx != nullptr) {
-        if (s_ctx->ctx != verbs) {
-            throw std::runtime_error{"cannot handle events in more than one context"};
-        }
-        fmt::print("Context already exists!\n");
-        return;
-    }
-    s_ctx = static_cast<context *>(malloc(sizeof(context)));
+Context *build_context(ibv_context *verbs) {
+    auto *s_ctx = static_cast<Context *>(malloc(sizeof(Context)));
     s_ctx->ctx = verbs;
     s_ctx->pd = ibv_alloc_pd(s_ctx->ctx);
     s_ctx->comp_channel = ibv_create_comp_channel(s_ctx->ctx);
     s_ctx->cq = ibv_create_cq(s_ctx->ctx, 10, nullptr, s_ctx->comp_channel, 0);
     ibv_req_notify_cq(s_ctx->cq, 0);
 
-    s_ctx->cq_poller_thread = std::thread([]() {
-        poll_cq();
+    s_ctx->cq_poller_thread = std::thread([s_ctx]() {
+        poll_cq(s_ctx);
     });
+    return s_ctx;
 }
 
-ibv_qp_init_attr build_qp_attr(context *ctx) {
-    ibv_qp_init_attr qp_attr{};
-    qp_attr.send_cq = ctx->cq;
-    qp_attr.recv_cq = ctx->cq;
-    qp_attr.qp_type = IBV_QPT_RC;
 
-    qp_attr.cap.max_send_wr = 10;
-    qp_attr.cap.max_recv_wr = 10;
-    qp_attr.cap.max_send_sge = 1;
-    qp_attr.cap.max_recv_sge = 1;
-    return qp_attr;
-}
+void register_memory(ClientConnection *conn, ibv_pd *pd) {
+    conn->send_region = static_cast<char *>(calloc(1, BUFFER_SIZE));
+    conn->recv_region = static_cast<char *>(calloc(1, BUFFER_SIZE));
 
-void register_memory(connection *conn) {
-    conn->send_region = static_cast<char *>(malloc(BUFFER_SIZE));
-    conn->recv_region = static_cast<char *>(malloc(BUFFER_SIZE));
-
-    conn->send_mr = ibv_reg_mr(s_ctx->pd,
+    conn->send_mr = ibv_reg_mr(pd,
                                conn->send_region,
                                BUFFER_SIZE,
                                IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
 
-    conn->recv_mr = ibv_reg_mr(s_ctx->pd,
+    conn->recv_mr = ibv_reg_mr(pd,
                                conn->recv_region,
                                BUFFER_SIZE,
                                IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
 }
 
-void post_receives(connection *conn) {
+void post_receives(ClientConnection *conn) {
     ibv_sge sge{};
     sge.addr = reinterpret_cast<uintptr_t>(conn->recv_region);
     sge.length = BUFFER_SIZE;
@@ -128,12 +103,14 @@ void post_receives(connection *conn) {
 
 
 bool on_connection(void *context) {
-    auto *conn = static_cast<connection *>(context);
+    fmt::print("connected.\n");
+    auto *conn = static_cast<ClientConnection *>(context);
 
+    cv::Mat sendMatrix(HEIGHT, WIDTH, CV_8UC1, (void *) conn->send_region);
+    sendMatrix.setTo(cv::Scalar(255));
+    cv::circle(sendMatrix, cv::Point(WIDTH / 2, HEIGHT / 2), HEIGHT / 2, cv::Scalar(0), 20);
 
-    fmt::format_to_n(conn->send_region, BUFFER_SIZE, "message from active/client side with pid {}", getpid());
-
-    fmt::print("connected. posting send...\n");
+    fmt::print("Sending\n", *(conn->send_region));
 
     ibv_sge sge{};
     sge.addr = reinterpret_cast<uint64_t>(conn->send_region);
@@ -148,6 +125,8 @@ bool on_connection(void *context) {
     wr.send_flags = IBV_SEND_SIGNALED; // We want complete notification for this send request
 
     ibv_send_wr *bad_wr = nullptr;
+    fmt::print("posting send...\n");
+    sendTime = std::chrono::high_resolution_clock::now();
     ibv_post_send(conn->qp, &wr, &bad_wr);
     return false;
 }
@@ -155,12 +134,12 @@ bool on_connection(void *context) {
 bool on_disconnect(rdma_cm_id *id) {
     fmt::print("disconnected\n");
 
-    auto *conn = static_cast<connection *>(id->context);
+    auto *conn = static_cast<ClientConnection *>(id->context);
     rdma_destroy_qp(id);
     ibv_dereg_mr(conn->send_mr);
     ibv_dereg_mr(conn->recv_mr);
     free(conn->send_region);
-    free(conn->recv_mr);
+    free(conn->recv_region);
     free(conn);
     rdma_destroy_id(id);
     return true;
@@ -168,17 +147,27 @@ bool on_disconnect(rdma_cm_id *id) {
 
 bool on_address_resolved(rdma_cm_id *id) {
     fmt::print("Address resolved.\n");
-    // Now we have a valid verbs context and can initialize the connection
-    build_context(id->verbs);
-    ibv_qp_init_attr qp_attr = build_qp_attr(s_ctx);
-    rdma_create_qp(id, s_ctx->pd, &qp_attr);
-    auto *conn = static_cast<connection *>(malloc(sizeof(connection)));
+    // Now we have a valid verbs Context and can initialize the ClientConnection
+
+    if (global_ctx != nullptr) {
+        if (global_ctx->ctx != id->verbs) {
+            throw std::runtime_error{"cannot handle events in more than one Context"};
+        }
+        fmt::print("Context already exists!\n");
+    } else {
+        global_ctx = build_context(id->verbs);
+    }
+
+
+    ibv_qp_init_attr qp_attr = build_qp_attr(global_ctx);
+    rdma_create_qp(id, global_ctx->pd, &qp_attr);
+    auto *conn = static_cast<ClientConnection *>(malloc(sizeof(ClientConnection)));
     id->context = conn;
     conn->id = id;
     conn->qp = id->qp;
     conn->num_completions = 0;
 
-    register_memory(conn);
+    register_memory(conn, global_ctx->pd);
     post_receives(conn);
 
     rdma_resolve_route(id, 500 /* ms */);
@@ -207,7 +196,7 @@ bool on_event(rdma_cm_event *event) {
         case RDMA_CM_EVENT_DISCONNECTED:
             return on_disconnect(event->id);
         default:
-            throw std::runtime_error{"Unknown event"};
+            throw std::runtime_error{fmt::format("Unknown event: {} ({})", event->event, rdma_event_str(event->event))};
     }
 }
 
