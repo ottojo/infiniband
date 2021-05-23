@@ -26,7 +26,7 @@ class RDMAServer {
         std::function<void(RDMAServer &server, ServerConnection &connection)> receiveCallback;
 
         std::thread eventLoop;
-        bool eventLoopEnd = false;
+        int endEventLoopFD;
 
         rdma_event_channel *ec = nullptr;
         rdma_cm_id *listener = nullptr;

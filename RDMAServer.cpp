@@ -5,8 +5,65 @@
 #include <stdexcept>
 #include <fmt/format.h>
 #include <utility>
+#include <netdb.h>
 #include "RDMAServer.hpp"
 #include "rdmaLib.hpp"
+#include <sys/eventfd.h>
+#include <unistd.h>
+
+struct FileDescriptorSets {
+    std::vector<int> read;
+    std::vector<int> write;
+    std::vector<int> except;
+};
+
+FileDescriptorSets waitForFDs(const FileDescriptorSets &fds, int timeoutSec, int timeoutUsec) {
+
+    while (true) {
+        fd_set readSet, writeSet, exceptSet;
+        FD_ZERO(&readSet);
+        FD_ZERO(&writeSet);
+        FD_ZERO(&exceptSet);
+        for (const auto &fd: fds.read) {
+            FD_SET(fd, &readSet);
+        }
+        for (const auto &fd: fds.write) {
+            FD_SET(fd, &writeSet);
+        }
+        for (const auto &fd: fds.except) {
+            FD_SET(fd, &exceptSet);
+        }
+        timeval timeout{.tv_sec=timeoutSec, .tv_usec=timeoutUsec};
+
+        int res = select(FD_SETSIZE, &readSet, &writeSet, &exceptSet, &timeout);
+
+        if (res == -1) {
+            throw std::runtime_error{fmt::format("Error during select: {}", strerror(errno))};
+        }
+        if (res == 0) {
+            continue;
+        }
+
+        FileDescriptorSets ret;
+        for (int i = 0; i < FD_SETSIZE; i++) {
+            if (FD_ISSET(i, &readSet)) {
+                ret.read.push_back(i);
+            }
+            if (FD_ISSET(i, &writeSet)) {
+                ret.write.push_back(i);
+            }
+            if (FD_ISSET(i, &exceptSet)) {
+                ret.except.push_back(i);
+            }
+        }
+        return ret;
+    }
+}
+
+template<typename T, typename E>
+bool contains(const T &v, const E &x) {
+    return std::find(v.begin(), v.end(), x) != v.end();
+}
 
 RDMAServer::RDMAServer(int port, std::size_t sendBufferSize, std::size_t recvBufferSize,
                        std::function<void()> onConnect,
@@ -14,7 +71,8 @@ RDMAServer::RDMAServer(int port, std::size_t sendBufferSize, std::size_t recvBuf
         sendBufferSize(sendBufferSize),
         recvBufferSize(recvBufferSize),
         connectCallback(std::move(onConnect)),
-        receiveCallback(std::move(onReceive)) {
+        receiveCallback(std::move(onReceive)),
+        endEventLoopFD(eventfd(0, 0)) {
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
@@ -30,26 +88,51 @@ RDMAServer::RDMAServer(int port, std::size_t sendBufferSize, std::size_t recvBuf
 
     eventLoop = std::thread([this]() {
         rdma_cm_event *event = nullptr;
-
-        while (rdma_get_cm_event(ec, &event) == 0) {
-            rdma_cm_event event_copy = *event;
-            rdma_ack_cm_event(event);
-            if (on_event(&event_copy) or eventLoopEnd) {
-                fmt::print("Event loop stopping.\n");
+        while (true) {
+            auto availableFDs = waitForFDs(FileDescriptorSets{.read={ec->fd, endEventLoopFD}}, 1, 0);
+            if (contains(availableFDs.read, ec->fd)) {
+                fmt::print("Event loop: event channed fd can be read, polling event\n");
+                if (rdma_get_cm_event(ec, &event) != 0) {
+                    throw std::runtime_error{fmt::format("Error during rdma_get_cm_event: {}", strerror(errno))};
+                }
+                rdma_cm_event event_copy = *event;
+                rdma_ack_cm_event(event);
+                fmt::print("Received RDMA event of type \"{}\"\n", rdma_event_str(event->event));
+                if (on_event(&event_copy)) {
+                    break;
+                }
+            } else if (contains(availableFDs.read, endEventLoopFD)) {
+                fmt::print("Event loop: eventfd can be read, breaking\n");
                 break;
+            } else {
+                throw std::runtime_error{"Error while waiting for events"};
             }
         }
+        fmt::print("Event loop stopping.\n");
+
     });
     fmt::print("Server init done\n");
 }
 
 RDMAServer::~RDMAServer() {
     fmt::print("Stopping RDMAServer\n");
-    eventLoopEnd = true;
+
+    fmt::print("Disconnecting\n");
+    rdma_disconnect(listener);
+
+    fmt::print("Destroying ID\n");
+    rdma_destroy_id(listener);
+
+    fmt::print("Writing to eventfd to signal event loop to end\n");
+    uint64_t v = 1;
+    write(endEventLoopFD, &v, sizeof(v));
+
     fmt::print("Waiting for connection manager event loop\n");
     eventLoop.join();
-    rdma_destroy_id(listener);
+
+    fmt::print("Destroying event channel\n");
     rdma_destroy_event_channel(ec);
+
     fmt::print("Stopped. Bye!\n");
 }
 

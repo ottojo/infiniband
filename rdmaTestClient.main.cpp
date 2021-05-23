@@ -17,7 +17,8 @@ Context *global_ctx = nullptr;
 
 void on_completion(const ibv_wc &wc) {
     if (wc.status != IBV_WC_SUCCESS) {
-        throw std::runtime_error{"on_complation: status is not success"};
+        throw std::runtime_error{fmt::format("Received work completion with status \"{}\" ({}), which is not success.",
+                                             ibv_wc_status_str(wc.status), wc.status)};
     }
 
     auto *conn = reinterpret_cast<ClientConnection *>(wc.wr_id);

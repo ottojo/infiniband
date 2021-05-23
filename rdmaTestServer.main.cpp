@@ -3,20 +3,21 @@
 //
 
 #include "fmt/format.h"
-#include <rdma/rdma_cma.h>
 #include <thread>
-#include <netinet/in.h>
 #include <opencv2/opencv.hpp>
 
 #include "rdmaLib.hpp"
 #include "RDMAServer.hpp"
-#include <signal.h>
+#include <csignal>
 
 
 volatile bool done = false;
 
+std::unique_ptr<RDMAServer> s = nullptr;
+
 void intHandler(int sig) {
     fmt::print("Signal received! {}\n", sig);
+    s.reset();
     done = true;
 }
 
@@ -36,11 +37,12 @@ void receiveCB(RDMAServer &server, ServerConnection &conn) {
 
 int main(int argc, char *argv[]) {
 
-    RDMAServer s(42069, BUFFER_SIZE, BUFFER_SIZE, []() {}, &receiveCB);
+    s = std::make_unique<RDMAServer>(42069, BUFFER_SIZE, BUFFER_SIZE, []() {}, &receiveCB);
     signal(SIGINT, intHandler);
     signal(SIGTERM, intHandler);
 
-    while (not done) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); }
+    while (not done) { std::this_thread::sleep_for(std::chrono::milliseconds(500)); }
+
 
     return 0;
 }
