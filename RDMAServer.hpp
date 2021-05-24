@@ -10,7 +10,7 @@
 #include <rdma/rdma_cma.h>
 #include <condition_variable>
 #include "rdmaLib.hpp"
-
+#include "BreakableEventLoop.hpp"
 
 class RDMAServer {
     public:
@@ -25,19 +25,17 @@ class RDMAServer {
         std::function<void()> connectCallback;
         std::function<void(RDMAServer &server, ServerConnection &connection)> receiveCallback;
 
-        std::thread eventLoop;
-        int endEventLoopFD;
+        std::unique_ptr<BreakableEventLoop> eventLoop;
 
         rdma_event_channel *ec = nullptr;
         rdma_cm_id *listener = nullptr;
-
 
         std::unique_ptr<Context> s_ctx = nullptr;
 
         std::size_t sendBufferSize;
         std::size_t recvBufferSize;
 
-        bool on_event(rdma_cm_event *event);
+        bool on_event(const rdma_cm_event &event);
 
         bool on_connection(void *context);
 
@@ -47,18 +45,9 @@ class RDMAServer {
 
         void on_completion(const ibv_wc &wc);
 
-
-        void build_context(ibv_context *verbsContext);
-
-
         void register_memory(ServerConnection *conn);
 
-
         void post_receives(ServerConnection *conn);
-
-        ibv_qp_init_attr build_qp_attr();
-
-
 };
 
 #endif //INFINIBAND_RDMASERVER_HPP

@@ -2,6 +2,7 @@
 // Created by jonas on 22.05.21.
 //
 
+#include "utils.hpp"
 #include <stdexcept>
 #include <fmt/format.h>
 #include <utility>
@@ -11,68 +12,13 @@
 #include <sys/eventfd.h>
 #include <unistd.h>
 
-struct FileDescriptorSets {
-    std::vector<int> read;
-    std::vector<int> write;
-    std::vector<int> except;
-};
-
-FileDescriptorSets waitForFDs(const FileDescriptorSets &fds, int timeoutSec, int timeoutUsec) {
-
-    while (true) {
-        fd_set readSet, writeSet, exceptSet;
-        FD_ZERO(&readSet);
-        FD_ZERO(&writeSet);
-        FD_ZERO(&exceptSet);
-        for (const auto &fd: fds.read) {
-            FD_SET(fd, &readSet);
-        }
-        for (const auto &fd: fds.write) {
-            FD_SET(fd, &writeSet);
-        }
-        for (const auto &fd: fds.except) {
-            FD_SET(fd, &exceptSet);
-        }
-        timeval timeout{.tv_sec=timeoutSec, .tv_usec=timeoutUsec};
-
-        int res = select(FD_SETSIZE, &readSet, &writeSet, &exceptSet, &timeout);
-
-        if (res == -1) {
-            throw std::runtime_error{fmt::format("Error during select: {}", strerror(errno))};
-        }
-        if (res == 0) {
-            continue;
-        }
-
-        FileDescriptorSets ret;
-        for (int i = 0; i < FD_SETSIZE; i++) {
-            if (FD_ISSET(i, &readSet)) {
-                ret.read.push_back(i);
-            }
-            if (FD_ISSET(i, &writeSet)) {
-                ret.write.push_back(i);
-            }
-            if (FD_ISSET(i, &exceptSet)) {
-                ret.except.push_back(i);
-            }
-        }
-        return ret;
-    }
-}
-
-template<typename T, typename E>
-bool contains(const T &v, const E &x) {
-    return std::find(v.begin(), v.end(), x) != v.end();
-}
-
 RDMAServer::RDMAServer(int port, std::size_t sendBufferSize, std::size_t recvBufferSize,
                        std::function<void()> onConnect,
                        std::function<void(RDMAServer &server, ServerConnection &connection)> onReceive) :
         sendBufferSize(sendBufferSize),
         recvBufferSize(recvBufferSize),
         connectCallback(std::move(onConnect)),
-        receiveCallback(std::move(onReceive)),
-        endEventLoopFD(eventfd(0, 0)) {
+        receiveCallback(std::move(onReceive)) {
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
@@ -86,31 +32,8 @@ RDMAServer::RDMAServer(int port, std::size_t sendBufferSize, std::size_t recvBuf
     uint16_t portRes = ntohs(rdma_get_src_port(listener));
     fmt::print("Listening on port {}\n", portRes);
 
-    eventLoop = std::thread([this]() {
-        rdma_cm_event *event = nullptr;
-        while (true) {
-            auto availableFDs = waitForFDs(FileDescriptorSets{.read={ec->fd, endEventLoopFD}}, 1, 0);
-            if (contains(availableFDs.read, ec->fd)) {
-                fmt::print("Event loop: event channed fd can be read, polling event\n");
-                if (rdma_get_cm_event(ec, &event) != 0) {
-                    throw std::runtime_error{fmt::format("Error during rdma_get_cm_event: {}", strerror(errno))};
-                }
-                rdma_cm_event event_copy = *event;
-                rdma_ack_cm_event(event);
-                fmt::print("Received RDMA event of type \"{}\"\n", rdma_event_str(event->event));
-                if (on_event(&event_copy)) {
-                    break;
-                }
-            } else if (contains(availableFDs.read, endEventLoopFD)) {
-                fmt::print("Event loop: eventfd can be read, breaking\n");
-                break;
-            } else {
-                throw std::runtime_error{"Error while waiting for events"};
-            }
-        }
-        fmt::print("Event loop stopping.\n");
+    eventLoop = std::make_unique<BreakableEventLoop>(ec, [this](const rdma_cm_event &e) { on_event(e); });
 
-    });
     fmt::print("Server init done\n");
 }
 
@@ -123,12 +46,7 @@ RDMAServer::~RDMAServer() {
     fmt::print("Destroying ID\n");
     rdma_destroy_id(listener);
 
-    fmt::print("Writing to eventfd to signal event loop to end\n");
-    uint64_t v = 1;
-    write(endEventLoopFD, &v, sizeof(v));
-
-    fmt::print("Waiting for connection manager event loop\n");
-    eventLoop.join();
+    eventLoop.reset();
 
     fmt::print("Destroying event channel\n");
     rdma_destroy_event_channel(ec);
@@ -136,23 +54,31 @@ RDMAServer::~RDMAServer() {
     fmt::print("Stopped. Bye!\n");
 }
 
-bool RDMAServer::on_event(rdma_cm_event *event) {
-    switch (event->event) {
+bool RDMAServer::on_event(const rdma_cm_event &event) {
+    switch (event.event) {
         case RDMA_CM_EVENT_CONNECT_REQUEST:
-            return on_connect_request(event->id);
+            return on_connect_request(event.id);
         case RDMA_CM_EVENT_ESTABLISHED:
-            return on_connection(event->id->context);
+            return on_connection(event.id->context);
         case RDMA_CM_EVENT_DISCONNECTED:
-            return on_disconnect(event->id);
+            return on_disconnect(event.id);
         default:
-            throw std::runtime_error{fmt::format("Unknown event: {} ({})", event->event, rdma_event_str(event->event))};
+            throw std::runtime_error{fmt::format("Unknown event: {} ({})", event.event, rdma_event_str(event.event))};
     }
 }
 
 bool RDMAServer::on_connect_request(rdma_cm_id *id) {
     fmt::print("Received connect request\n");
-    build_context(id->verbs);
-    ibv_qp_init_attr qp_attr = build_qp_attr();
+    fmt::print("Building context from ibv context\n");
+    if (s_ctx != nullptr) {
+        if (s_ctx->ctx != id->verbs) {
+            throw std::runtime_error{"Context with different ibv context already exists"};
+        }
+        fmt::print("Context already exists!\n");
+    } else {
+        s_ctx = std::make_unique<Context>(id->verbs, [this](const auto &wc) { on_completion(wc); });
+    }
+    ibv_qp_init_attr qp_attr = build_qp_attr(s_ctx.get());
     rdma_create_qp(id, s_ctx->pd, &qp_attr);
     auto *conn = new ServerConnection;
     id->context = conn;
@@ -185,44 +111,6 @@ bool RDMAServer::on_connection(void *context) {
     return false;
 }
 
-void RDMAServer::build_context(ibv_context *verbsContext) {
-    fmt::print("Building context from ibv context\n");
-    if (s_ctx != nullptr) {
-        if (s_ctx->ctx != verbsContext) {
-            throw std::runtime_error{"Context with different ibv context already exists"};
-        }
-        fmt::print("Context already exists!\n");
-        return;
-    }
-    s_ctx = std::make_unique<Context>();
-    s_ctx->ctx = verbsContext;
-    fmt::print("Allocating protection domain\n");
-    s_ctx->pd = ibv_alloc_pd(s_ctx->ctx);
-    fmt::print("Creating completion channel\n");
-    s_ctx->comp_channel = ibv_create_comp_channel(s_ctx->ctx);
-    fmt::print("Creating completion queue\n");
-    s_ctx->cq = ibv_create_cq(s_ctx->ctx, 10, nullptr, s_ctx->comp_channel, 0);
-    // Request notification for next event, even if not solicited
-    ibv_req_notify_cq(s_ctx->cq, 0);
-
-    s_ctx->cq_poller_thread = std::thread([this]() {
-        void *ctx = nullptr;
-        while (true) {
-            ibv_cq *cq;
-            // Wait for next completion event in the channel
-            ibv_get_cq_event(s_ctx->comp_channel, &cq, &ctx);
-            // Acknowledge completion event
-            ibv_ack_cq_events(cq, 1);
-            // Request a notification when the next Work Completion is added to the Completion Queue
-            ibv_req_notify_cq(cq, 0);
-            // Empty the completion queue of WCs
-            ibv_wc wc{};
-            while (ibv_poll_cq(cq, 1, &wc)) {
-                on_completion(wc);
-            }
-        }
-    });
-}
 
 void RDMAServer::on_completion(const ibv_wc &wc) {
     if (wc.status != IBV_WC_SUCCESS) {
@@ -266,19 +154,6 @@ void RDMAServer::post_receives(ServerConnection *conn) {
 
     ibv_recv_wr *bad_wr = nullptr;
     ibv_post_recv(conn->qp, &wr, &bad_wr);
-}
-
-ibv_qp_init_attr RDMAServer::build_qp_attr() {
-    ibv_qp_init_attr qp_attr{};
-    qp_attr.send_cq = s_ctx->cq;
-    qp_attr.recv_cq = s_ctx->cq;
-    qp_attr.qp_type = IBV_QPT_RC;
-
-    qp_attr.cap.max_send_wr = 10;
-    qp_attr.cap.max_recv_wr = 10;
-    qp_attr.cap.max_send_sge = 1;
-    qp_attr.cap.max_recv_sge = 1;
-    return qp_attr;
 }
 
 void RDMAServer::send(ServerConnection &conn) {

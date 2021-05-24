@@ -9,6 +9,9 @@
 #include <rdma/rdma_cma.h>
 #include <thread>
 #include <vector>
+#include <functional>
+
+#include <gsl/gsl>
 
 constexpr auto WIDTH = 1920;
 constexpr auto HEIGHT = 1080;
@@ -34,13 +37,21 @@ struct ServerConnection {
 };
 
 
-struct Context {
-    ibv_context *ctx;
-    ibv_pd *pd;
-    ibv_cq *cq;
-    ibv_comp_channel *comp_channel;
+class Context {
+    public:
+        using WCCallback = std::function<void(const ibv_wc &wc)>;
 
-    std::thread cq_poller_thread;
+        explicit Context(gsl::owner<ibv_context *> ibvContext, WCCallback workCompletionCallback);
+
+        ~Context();
+
+        ibv_context *ctx;
+        gsl::owner<ibv_pd *> pd;
+        gsl::owner<ibv_cq *> cq;
+        gsl::owner<ibv_comp_channel *> comp_channel;
+    private:
+        std::thread cq_poller_thread; // TODO: properly join this thread
+        WCCallback workCompletionCallback;
 };
 
 

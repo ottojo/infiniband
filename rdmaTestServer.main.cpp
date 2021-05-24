@@ -37,7 +37,7 @@ void receiveCB(RDMAServer &server, ServerConnection &conn) {
 
 int main(int argc, char *argv[]) {
 
-    s = std::make_unique<RDMAServer>(42069, BUFFER_SIZE, BUFFER_SIZE, []() {}, &receiveCB);
+    s = std::make_unique<RDMAServer>(42069, BUFFER_SIZE, BUFFER_SIZE, []() {fmt::print("Client connected\n");}, &receiveCB);
     signal(SIGINT, intHandler);
     signal(SIGTERM, intHandler);
 
