@@ -57,12 +57,14 @@ void on_completion(const ibv_wc &wc) {
 }
 
 Context *build_context(ibv_context *verbs) {
-    auto *s_ctx = static_cast<Context *>(malloc(sizeof(Context)));
+    auto *s_ctx = new Context();// static_cast<Context *>(calloc(1, sizeof(Context)));
     s_ctx->ctx = verbs;
     s_ctx->pd = ibv_alloc_pd(s_ctx->ctx);
     s_ctx->comp_channel = ibv_create_comp_channel(s_ctx->ctx);
     s_ctx->cq = ibv_create_cq(s_ctx->ctx, 10, nullptr, s_ctx->comp_channel, 0);
     ibv_req_notify_cq(s_ctx->cq, 0);
+
+    assert(not s_ctx->cq_poller_thread.joinable());
 
     s_ctx->cq_poller_thread = std::thread([s_ctx]() {
         poll_cq(s_ctx);
@@ -72,18 +74,26 @@ Context *build_context(ibv_context *verbs) {
 
 
 void register_memory(ClientConnection *conn, ibv_pd *pd) {
-    conn->send_region = static_cast<char *>(calloc(1, BUFFER_SIZE));
-    conn->recv_region = static_cast<char *>(calloc(1, BUFFER_SIZE));
+    fmt::print("Allocating send and receive buffers\n");
+    conn->send_region = new char[BUFFER_SIZE];
+    conn->recv_region = new char[BUFFER_SIZE];
 
+    fmt::print("Registering memory regions with protection domain\n");
     conn->send_mr = ibv_reg_mr(pd,
                                conn->send_region,
                                BUFFER_SIZE,
                                IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
+    if (conn->send_mr == nullptr) {
+        throw std::runtime_error{fmt::format("Registering send memory region failed: {}", strerror(errno))};
+    }
 
     conn->recv_mr = ibv_reg_mr(pd,
                                conn->recv_region,
                                BUFFER_SIZE,
                                IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
+    if (conn->recv_mr == nullptr) {
+        throw std::runtime_error{fmt::format("Registering receive memory region failed.")};
+    }
 }
 
 void post_receives(ClientConnection *conn) {
@@ -139,9 +149,9 @@ bool on_disconnect(rdma_cm_id *id) {
     rdma_destroy_qp(id);
     ibv_dereg_mr(conn->send_mr);
     ibv_dereg_mr(conn->recv_mr);
-    free(conn->send_region);
-    free(conn->recv_region);
-    free(conn);
+    delete[] conn->send_region;
+    delete[] conn->recv_region;
+    delete conn;
     rdma_destroy_id(id);
     return true;
 }
@@ -162,7 +172,7 @@ bool on_address_resolved(rdma_cm_id *id) {
 
     ibv_qp_init_attr qp_attr = build_qp_attr(global_ctx);
     rdma_create_qp(id, global_ctx->pd, &qp_attr);
-    auto *conn = static_cast<ClientConnection *>(malloc(sizeof(ClientConnection)));
+    auto *conn = new ClientConnection();
     id->context = conn;
     conn->id = id;
     conn->qp = id->qp;
@@ -213,12 +223,21 @@ int main(int argc, char *argv[]) {
     }
 
     rdma_event_channel *ec = rdma_create_event_channel();
+    if (ec == nullptr) {
+        throw std::runtime_error{fmt::format("Error creating event channel: {}", strerror(errno))};
+    }
 
 
     rdma_cm_id *conn = nullptr;
     rdma_create_id(ec, &conn, nullptr, RDMA_PS_TCP); // TODO: Why TCP and not IB?
+    if (conn == nullptr) {
+        throw std::runtime_error{fmt::format("Error creating communication identifier: {}", strerror(errno))};
+    }
 
-    rdma_resolve_addr(conn, nullptr, addr->ai_addr, 500 /* ms timeout */);
+    if (rdma_resolve_addr(conn, nullptr, addr->ai_addr, 500 /* ms timeout */) == -1) {
+        throw std::runtime_error{fmt::format("Error resolving address: {}", strerror(errno))};
+
+    }
     freeaddrinfo(addr);
 
     rdma_cm_event *event = nullptr;
