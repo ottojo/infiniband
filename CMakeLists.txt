@@ -17,7 +17,8 @@ find_package(OpenCV REQUIRED)
 #target_link_libraries(infiniband PRIVATE IBVerbs::verbs fmt::fmt Microsoft.GSL::GSL pthread rdmacm)
 #target_compile_options(infiniband PRIVATE -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers)
 
-add_executable(rdmaTestServer rdmaTestServer.main.cpp rdmaLib.cpp rdmaLib.hpp RDMAServer.cpp RDMAServer.hpp utils.cpp utils.hpp BreakableEventLoop.cpp BreakableEventLoop.hpp)
+add_executable(rdmaTestServer rdmaTestServer.main.cpp rdmaLib.cpp rdmaLib.hpp RDMAServer.cpp RDMAServer.hpp utils.cpp utils.hpp BreakableEventLoop.cpp BreakableEventLoop.hpp Buffer.hpp)
+target_include_directories(rdmaTestServer PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(rdmaTestServer PRIVATE fmt::fmt IBVerbs::verbs pthread rdmacm ${OpenCV_LIBS})
 
 

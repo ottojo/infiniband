@@ -10,38 +10,63 @@
 
 #include <string>
 #include <functional>
+#include <future>
 #include "rdmaLib.hpp"
+#include "BreakableEventLoop.hpp"
+#include "Buffer.hpp"
+#include <map>
+#include <queue>
 
 class RDMAClient {
     public:
-        RDMAClient(std::string server, std::string port, std::size_t sendBufferSize,
-                   std::function<void(ClientConnection *)> receiveCallback);
+        using ReceiveCallback = std::function<void(const ibv_wc&, Buffer<char> &&)>;
+
+        RDMAClient(std::string server, std::string port, std::size_t sendBufferSize, std::size_t recvBufferSize,
+                   ReceiveCallback receiveCallback);
 
         ~RDMAClient();
 
+        Buffer<char> getBuffer();
+
+        void send(Buffer<char> &&b);
+
+        void returnBuffer(Buffer<char> &&b);
+
     private:
+
+        std::queue<Buffer<char>> sendBufferPool;
+        std::map<char *, Buffer<char>> inFlightSendBuffers;
+        std::queue<Buffer<char>> receiveBufferPool;
+        std::map<char *, Buffer<char>> inFlightReceiveBuffers;
+
+        const std::size_t recv_size;
+        const std::size_t send_size;
+
         std::unique_ptr<Context> global_ctx = nullptr;
-        rdma_event_channel *ec;
-        std::function<void(ClientConnection *)> receiveCallback;
+        gsl::owner<rdma_event_channel *> ec;
+
+        ClientConnection *conn;
+
+        ReceiveCallback receiveCallback;
+
+        std::unique_ptr<BreakableEventLoop> eventLoop;
+
+        std::promise<bool> connectedPromise;
 
         void on_completion(const ibv_wc &wc);
 
-        void register_memory(ClientConnection *conn, ibv_pd *pd);
 
-        void post_receives(ClientConnection *conn);
+        void post_receives();
 
-        bool on_connection(void *context);
+        bool on_connection();
 
-        bool on_disconnect(rdma_cm_id *id);
+        static bool on_disconnect(rdma_cm_id *id);
 
         bool on_address_resolved(rdma_cm_id *id);
 
-        bool on_route_resolved(rdma_cm_id *id);
+        static bool on_route_resolved(rdma_cm_id *id);
 
-/**
- * @return true to end event loop
- */
-        bool on_event(rdma_cm_event *event);
+        bool on_event(const rdma_cm_event &event);
 
 };
 

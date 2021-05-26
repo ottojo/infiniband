@@ -20,11 +20,6 @@ constexpr auto BUFFER_SIZE = WIDTH * HEIGHT;
 struct ClientConnection {
     rdma_cm_id *id;
     ibv_qp *qp;
-    ibv_mr *send_mr;
-    ibv_mr *recv_mr;
-    char *recv_region;
-    char *send_region;
-    int num_completions;
 };
 
 

@@ -13,6 +13,9 @@
 #include <functional>
 #include <rdma/rdma_cma.h>
 
+/**
+ * Event loop that is automatically stopped when dtor is called
+ */
 class BreakableEventLoop {
     public:
         using EventHandler = std::function<void(const rdma_cm_event &)>;
@@ -21,12 +24,13 @@ class BreakableEventLoop {
 
         ~BreakableEventLoop();
 
-        void join();
-
     private:
+
         std::thread eventLoop;
         EventHandler eventHandler;
         int endEventLoopFD;
+
+        void join();
 };
 
 
