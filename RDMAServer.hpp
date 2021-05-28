@@ -11,43 +11,47 @@
 #include <condition_variable>
 #include "rdmaLib.hpp"
 #include "BreakableEventLoop.hpp"
+#include "BufferSet.hpp"
 
-class RDMAServer {
+class RDMAServer : public BufferSet {
     public:
         RDMAServer(int port, std::size_t sendBufferSize, std::size_t recvBufferSize, std::function<void()> onConnect,
-                   std::function<void(RDMAServer &server, ServerConnection &connection)> onReceive);
+                   std::function<void(Buffer<char> &&b)> onReceive);
 
         ~RDMAServer();
 
-        void send(ServerConnection &connection);
+        Buffer<char> getSendBuffer();
+
+        void send(Buffer<char> &&b);
 
     private:
         std::function<void()> connectCallback;
-        std::function<void(RDMAServer &server, ServerConnection &connection)> receiveCallback;
+        std::function<void(Buffer<char> &&b)> receiveCallback;
 
         std::unique_ptr<BreakableEventLoop> eventLoop;
 
         rdma_event_channel *ec = nullptr;
-        rdma_cm_id *listener = nullptr;
 
-        std::unique_ptr<Context> s_ctx = nullptr;
+        gsl::owner<ibv_pd *> protectionDomain;
+
+        std::unique_ptr<CompletionPoller> completionPoller = nullptr;
+
+        gsl::owner<rdma_cm_id *> conn = nullptr;
 
         std::size_t sendBufferSize;
         std::size_t recvBufferSize;
 
         bool on_event(const rdma_cm_event &event);
 
-        bool on_connection(void *context);
+        bool on_connection();
 
-        bool on_disconnect(rdma_cm_id *id);
+        bool on_disconnect();
 
-        bool on_connect_request(rdma_cm_id *id);
+        bool on_connect_request(gsl::owner<rdma_cm_id *> newConn);
 
         void on_completion(const ibv_wc &wc);
 
-        void register_memory(ServerConnection *conn);
-
-        void post_receives(ServerConnection *conn);
+        void post_receives();
 };
 
 #endif //INFINIBAND_RDMASERVER_HPP

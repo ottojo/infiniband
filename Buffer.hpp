@@ -12,6 +12,7 @@
 #include <cassert>
 #include <infiniband/verbs.h>
 #include <fmt/format.h>
+#include <gsl/gsl>
 
 template<typename T>
 class Buffer {
@@ -28,16 +29,36 @@ class Buffer {
         };
 
         ~Buffer() {
-            ibv_dereg_mr(memoryRegionMetadata);
+            if (memoryRegionMetadata != nullptr) {
+                // This case occurs if this object was moved-from
+                ibv_dereg_mr(memoryRegionMetadata);
+            }
         }
 
         Buffer(const Buffer &) = delete;
 
-        Buffer(Buffer &&) noexcept = default;
+        Buffer(Buffer &&rhs) noexcept {
+            _size = rhs._size;
+            _data = std::move(rhs._data);
+            memoryRegionMetadata = rhs.memoryRegionMetadata;
+            rhs.memoryRegionMetadata = nullptr;
+        };
 
         Buffer &operator=(const Buffer &) = delete;
 
-        Buffer &operator=(Buffer &&) noexcept = default;
+        Buffer &operator=(Buffer &&rhs) noexcept {
+            if (this != &rhs) {
+                _size = rhs._size;
+                rhs._size = 0;
+                _data = std::move(rhs._data);
+                if (memoryRegionMetadata != nullptr) {
+                    // This case occurs if this object was moved-from
+                    ibv_dereg_mr(memoryRegionMetadata);
+                }
+                memoryRegionMetadata = rhs.memoryRegionMetadata;
+                rhs.memoryRegionMetadata = nullptr;
+            }
+        };
 
         T &at(std::ptrdiff_t i) {
             assert(i < _size);

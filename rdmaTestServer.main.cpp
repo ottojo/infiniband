@@ -22,22 +22,24 @@ void intHandler(int sig) {
 }
 
 
-void receiveCB(RDMAServer &server, ServerConnection &conn) {
+void receiveCB(Buffer<char> &&b) {
 
     auto start = std::chrono::high_resolution_clock::now();
-    cv::Mat inputMatrix(HEIGHT, WIDTH, CV_8UC1, (void *) conn.recv_region.data());
-    cv::Mat outputMatrix(HEIGHT, WIDTH, CV_8UC1, (void *) conn.send_region.data());
+    cv::Mat inputMatrix(HEIGHT, WIDTH, CV_8UC1, (void *) b.data());
+    Buffer<char> sendB = s->getSendBuffer();
+    cv::Mat outputMatrix(HEIGHT, WIDTH, CV_8UC1, (void *) sendB.data());
     cv::GaussianBlur(inputMatrix, outputMatrix, cv::Size(0, 0), 5);
     auto time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start);
     fmt::print("Calculation took {}ms\n", time.count());
 
-    server.send(conn);
+    s->send(std::move(sendB));
 }
 
 
 int main(int argc, char *argv[]) {
 
-    s = std::make_unique<RDMAServer>(42069, BUFFER_SIZE, BUFFER_SIZE, []() {fmt::print("Client connected\n");}, &receiveCB);
+    s = std::make_unique<RDMAServer>(42069, BUFFER_SIZE, BUFFER_SIZE, []() { fmt::print("Client connected\n"); },
+                                     &receiveCB);
     signal(SIGINT, intHandler);
     signal(SIGTERM, intHandler);
 

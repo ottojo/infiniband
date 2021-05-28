@@ -17,12 +17,7 @@ constexpr auto WIDTH = 1920;
 constexpr auto HEIGHT = 1080;
 constexpr auto BUFFER_SIZE = WIDTH * HEIGHT;
 
-struct ClientConnection {
-    rdma_cm_id *id;
-    ibv_qp *qp;
-};
-
-
+/*
 struct ServerConnection {
     ibv_qp *qp;
     ibv_mr *send_mr;
@@ -30,18 +25,16 @@ struct ServerConnection {
     std::vector<char> recv_region;
     std::vector<char> send_region;
 };
+*/
 
-
-class Context {
+class CompletionPoller {
     public:
         using WCCallback = std::function<void(const ibv_wc &wc)>;
 
-        explicit Context(gsl::owner<ibv_context *> ibvContext, WCCallback workCompletionCallback);
+        CompletionPoller(ibv_context *ibvContext, WCCallback workCompletionCallback);
 
-        ~Context();
+        ~CompletionPoller();
 
-        ibv_context *ctx;
-        gsl::owner<ibv_pd *> pd;
         gsl::owner<ibv_cq *> cq;
         gsl::owner<ibv_comp_channel *> comp_channel;
     private:
@@ -50,6 +43,6 @@ class Context {
 };
 
 
-ibv_qp_init_attr build_qp_attr(Context *s_ctx);
+ibv_qp_init_attr build_qp_attr(ibv_cq *cq);
 
 #endif //INFINIBAND_RDMALIB_HPP

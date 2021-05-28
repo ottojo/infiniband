@@ -9,6 +9,7 @@
 #include <sys/eventfd.h>
 #include "BreakableEventLoop.hpp"
 #include "utils.hpp"
+#include <unistd.h>
 
 BreakableEventLoop::BreakableEventLoop(rdma_event_channel *ec, BreakableEventLoop::EventHandler handler) :
         eventHandler(std::move(handler)),

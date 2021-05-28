@@ -14,9 +14,8 @@
 
 RDMAServer::RDMAServer(int port, std::size_t sendBufferSize, std::size_t recvBufferSize,
                        std::function<void()> onConnect,
-                       std::function<void(RDMAServer &server, ServerConnection &connection)> onReceive) :
-        sendBufferSize(sendBufferSize),
-        recvBufferSize(recvBufferSize),
+                       std::function<void(Buffer<char> &&b)> onReceive) :
+        BufferSet(sendBufferSize, recvBufferSize),
         connectCallback(std::move(onConnect)),
         receiveCallback(std::move(onReceive)) {
     sockaddr_in addr{};
@@ -25,11 +24,11 @@ RDMAServer::RDMAServer(int port, std::size_t sendBufferSize, std::size_t recvBuf
 
     ec = rdma_create_event_channel();
 
-    rdma_create_id(ec, &listener, nullptr, RDMA_PS_TCP);
-    rdma_bind_addr(listener, (sockaddr *) &addr);
-    rdma_listen(listener, 10); // Arbitrary backlog 10
+    rdma_create_id(ec, &conn, nullptr, RDMA_PS_TCP);
+    rdma_bind_addr(conn, (sockaddr *) &addr);
+    rdma_listen(conn, 10); // Arbitrary backlog 10
 
-    uint16_t portRes = ntohs(rdma_get_src_port(listener));
+    uint16_t portRes = ntohs(rdma_get_src_port(conn));
     fmt::print("Listening on port {}\n", portRes);
 
     eventLoop = std::make_unique<BreakableEventLoop>(ec, [this](const rdma_cm_event &e) { on_event(e); });
@@ -41,72 +40,67 @@ RDMAServer::~RDMAServer() {
     fmt::print("Stopping RDMAServer\n");
 
     fmt::print("Disconnecting\n");
-    rdma_disconnect(listener);
+    rdma_disconnect(conn);
 
     fmt::print("Destroying ID\n");
-    rdma_destroy_id(listener);
+    rdma_destroy_id(conn);
 
     eventLoop.reset();
 
     fmt::print("Destroying event channel\n");
     rdma_destroy_event_channel(ec);
 
+    ibv_dealloc_pd(protectionDomain);
+
     fmt::print("Stopped. Bye!\n");
 }
 
 bool RDMAServer::on_event(const rdma_cm_event &event) {
+    fmt::print("Received event {}\n", rdma_event_str(event.event));
     switch (event.event) {
         case RDMA_CM_EVENT_CONNECT_REQUEST:
             return on_connect_request(event.id);
         case RDMA_CM_EVENT_ESTABLISHED:
-            return on_connection(event.id->context);
+            return on_connection();
         case RDMA_CM_EVENT_DISCONNECTED:
-            return on_disconnect(event.id);
+            return on_disconnect();
         default:
             throw std::runtime_error{fmt::format("Unknown event: {} ({})", event.event, rdma_event_str(event.event))};
     }
 }
 
-bool RDMAServer::on_connect_request(rdma_cm_id *id) {
+bool RDMAServer::on_connect_request(gsl::owner<rdma_cm_id *> newConn) {
     fmt::print("Received connect request\n");
-    fmt::print("Building context from ibv context\n");
-    if (s_ctx != nullptr) {
-        if (s_ctx->ctx != id->verbs) {
-            throw std::runtime_error{"Context with different ibv context already exists"};
-        }
-        fmt::print("Context already exists!\n");
+    fmt::print("Building completion queue etc\n");
+    if (completionPoller != nullptr) {
+        throw std::runtime_error{"Completion poller already exists"};
     } else {
-        s_ctx = std::make_unique<Context>(id->verbs, [this](const auto &wc) { on_completion(wc); });
+        conn = newConn;
+        completionPoller = std::make_unique<CompletionPoller>(conn->verbs,
+                                                              [this](const auto &wc) { on_completion(wc); });
     }
-    ibv_qp_init_attr qp_attr = build_qp_attr(s_ctx.get());
-    rdma_create_qp(id, s_ctx->pd, &qp_attr);
-    auto *conn = new ServerConnection;
-    id->context = conn;
-    conn->qp = id->qp;
-    register_memory(conn);
-    post_receives(conn);
+
+    protectionDomain = ibv_alloc_pd(conn->verbs);
+
+
+    ibv_qp_init_attr qp_attr = build_qp_attr(completionPoller->cq);
+    rdma_create_qp(conn, protectionDomain, &qp_attr); //TODO: PD
+    post_receives();
     rdma_conn_param cm_params{};
-    rdma_accept(id, &cm_params);
+    rdma_accept(conn, &cm_params);
     return false;
 }
 
-bool RDMAServer::on_disconnect(rdma_cm_id *id) {
+bool RDMAServer::on_disconnect() {
     fmt::print("peer disconnected\n");
-
-    auto *conn = static_cast<ServerConnection *>(id->context);
-    fmt::print("Destroying queue pair\n");
-    rdma_destroy_qp(id);
-    fmt::print("Removing memory regions\n");
-    ibv_dereg_mr(conn->send_mr);
-    ibv_dereg_mr(conn->recv_mr);
-    fmt::print("Deleting ServerConnection (including send/recv buffers)\n");
-    delete conn;
+    completionPoller.reset();
+    ibv_dealloc_pd(protectionDomain);
     fmt::print("Destroy RDMA communication identifier\n");
-    rdma_destroy_id(id);
+    rdma_destroy_id(conn);
     return false;
 }
 
-bool RDMAServer::on_connection(void *context) {
+bool RDMAServer::on_connection() {
     connectCallback();
     return false;
 }
@@ -116,59 +110,60 @@ void RDMAServer::on_completion(const ibv_wc &wc) {
     if (wc.status != IBV_WC_SUCCESS) {
         throw std::runtime_error{fmt::format("on_completion: status is not success: {}", ibv_wc_status_str(wc.status))};
     }
+    char *receiveBufferData = reinterpret_cast<char *>(wc.wr_id);
+
     if (wc.opcode == IBV_WC_RECV) {
-        auto *conn = reinterpret_cast<ServerConnection *>(wc.wr_id);
         fmt::print("Received message, calling callback\n");
-        receiveCallback(*this, *conn);
+        receiveCallback(findReceiveBuffer(receiveBufferData));
     } else if (wc.opcode == IBV_WC_SEND) {
         fmt::print("Send of wr {} completed successfully\n", wc.wr_id);
+        returnBuffer(findSendBuffer(receiveBufferData));
     }
 }
 
-void RDMAServer::register_memory(ServerConnection *conn) {
-    conn->send_region = std::vector<char>(sendBufferSize, 0);
-    conn->recv_region = std::vector<char>(recvBufferSize, 0);
+void RDMAServer::post_receives() {
+    fmt::print("Posting receives\n");
 
-    conn->send_mr = ibv_reg_mr(s_ctx->pd,
-                               conn->send_region.data(),
-                               conn->send_region.size(),
-                               IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
+    Buffer<char> b = getRecvBuffer().value_or(Buffer<char>(getSendSize(), protectionDomain));
 
-    conn->recv_mr = ibv_reg_mr(s_ctx->pd,
-                               conn->recv_region.data(),
-                               conn->recv_region.size(),
-                               IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
-}
-
-void RDMAServer::post_receives(ServerConnection *conn) {
     ibv_sge sge{};
-    sge.addr = reinterpret_cast<uintptr_t>(conn->recv_region.data());
-    sge.length = BUFFER_SIZE;
-    sge.lkey = conn->recv_mr->lkey;
+    sge.addr = reinterpret_cast<uint64_t >(b.data());
+    sge.length = getRecvSize();
+    sge.lkey = b.getMR()->lkey;
 
     ibv_recv_wr wr{};
-    wr.wr_id = reinterpret_cast<uintptr_t>(conn);
+    wr.wr_id = reinterpret_cast<uintptr_t>(b.data()); // Identify the buffer by the data pointer once WR completed
     wr.next = nullptr;
     wr.sg_list = &sge;
     wr.num_sge = 1;
 
     ibv_recv_wr *bad_wr = nullptr;
-    ibv_post_recv(conn->qp, &wr, &bad_wr);
+    fmt::print("Posting receive with size {}\n", sge.length);
+    ibv_post_recv(conn->qp, &wr, &bad_wr);;
+    markInFlightRecv(std::move(b));
 }
 
-void RDMAServer::send(ServerConnection &conn) {
+void RDMAServer::send(Buffer<char> &&b) {
+    assert(b.size() == getSendSize());
+
     ibv_sge sge{};
-    sge.addr = reinterpret_cast<uint64_t>(conn.send_region.data());
-    sge.length = conn.send_region.size();
-    sge.lkey = conn.send_mr->lkey;
+    sge.addr = reinterpret_cast<uint64_t>(b.data());
+    sge.length = b.size();
+    sge.lkey = b.getMR()->lkey;
 
     ibv_send_wr wr{};
     wr.opcode = IBV_WR_SEND; // Send request that must match a corresponding receive request on the peer
+    wr.wr_id = reinterpret_cast<uint64_t>(b.data());
     wr.sg_list = &sge;
     wr.num_sge = 1;
     wr.send_flags = IBV_SEND_SIGNALED; // We want complete notification for this send request
 
     ibv_send_wr *bad_wr = nullptr;
     fmt::print("Posting send request for result\n");
-    ibv_post_send(conn.qp, &wr, &bad_wr);
+    ibv_post_send(conn->qp, &wr, &bad_wr);
+    markInFlightSend(std::move(b));
+}
+
+Buffer<char> RDMAServer::getSendBuffer() {
+    return BufferSet::getSendBuffer().value_or(Buffer<char>(getSendSize(), protectionDomain));
 }

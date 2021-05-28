@@ -6,10 +6,10 @@
 #include <cassert>
 #include "rdmaLib.hpp"
 
-ibv_qp_init_attr build_qp_attr(Context *s_ctx) {
+ibv_qp_init_attr build_qp_attr(ibv_cq *cq) {
     ibv_qp_init_attr qp_attr{};
-    qp_attr.send_cq = s_ctx->cq;
-    qp_attr.recv_cq = s_ctx->cq;
+    qp_attr.send_cq = cq;
+    qp_attr.recv_cq = cq;
     qp_attr.qp_type = IBV_QPT_RC;
 
     qp_attr.cap.max_send_wr = 10;
@@ -19,16 +19,14 @@ ibv_qp_init_attr build_qp_attr(Context *s_ctx) {
     return qp_attr;
 }
 
-Context::Context(gsl::owner<ibv_context *> ibvContext, WCCallback workCompletionCallback) :
-        ctx(ibvContext),
+CompletionPoller::CompletionPoller(ibv_context *ibvContext, WCCallback workCompletionCallback) :
         workCompletionCallback(std::move(workCompletionCallback)) {
 
-    fmt::print("Allocating protection domain\n");
-    pd = ibv_alloc_pd(ctx);
+
     fmt::print("Creating completion channel\n");
-    comp_channel = ibv_create_comp_channel(ctx);
+    comp_channel = ibv_create_comp_channel(ibvContext);
     fmt::print("Creating completion queue\n");
-    cq = ibv_create_cq(ctx, 10, nullptr, comp_channel, 0);
+    cq = ibv_create_cq(ibvContext, 10, nullptr, comp_channel, 0);
     // Request notification for next event, even if not solicited
     ibv_req_notify_cq(cq, 0);
 
@@ -58,7 +56,7 @@ Context::Context(gsl::owner<ibv_context *> ibvContext, WCCallback workCompletion
     });
 }
 
-Context::~Context() {
+CompletionPoller::~CompletionPoller() {
     // cq_poller_thread.join();
     if (cq_poller_thread.joinable()) {
         fmt::print("TODO: join completion queue poller thread\n");
@@ -66,6 +64,5 @@ Context::~Context() {
 
     ibv_destroy_cq(cq);
     ibv_destroy_comp_channel(comp_channel);
-    ibv_dealloc_pd(pd);
 
 }
