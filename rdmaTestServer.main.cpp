@@ -23,12 +23,13 @@ void intHandler(int sig) {
 
 
 void receiveCB(Buffer<char> &&b) {
-
     auto start = std::chrono::high_resolution_clock::now();
+
     cv::Mat inputMatrix(HEIGHT, WIDTH, CV_8UC1, (void *) b.data());
     Buffer<char> sendB = s->getSendBuffer();
     cv::Mat outputMatrix(HEIGHT, WIDTH, CV_8UC1, (void *) sendB.data());
     cv::GaussianBlur(inputMatrix, outputMatrix, cv::Size(0, 0), 5);
+
     auto time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start);
     fmt::print("Calculation took {}ms\n", time.count());
 
