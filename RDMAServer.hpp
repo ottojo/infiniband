@@ -36,7 +36,8 @@ class RDMAServer : public BufferSet {
 
         std::unique_ptr<CompletionPoller> completionPoller = nullptr;
 
-        gsl::owner<rdma_cm_id *> conn = nullptr;
+        gsl::owner<rdma_cm_id *> listenerConn = nullptr;
+        gsl::owner<rdma_cm_id *> clientConn = nullptr; // TODO: Verify owner, we get this one via connect request event
 
         std::size_t sendBufferSize;
         std::size_t recvBufferSize;

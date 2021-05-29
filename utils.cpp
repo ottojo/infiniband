@@ -33,7 +33,6 @@ FileDescriptorSets waitForFDs(const FileDescriptorSets &fds, int timeoutSec, int
             throw std::runtime_error{fmt::format("Error during select: {}", strerror(errno))};
         }
         if (res == 0) {
-            fmt::print("eventloop\n");
             continue;
         }
 

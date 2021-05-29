@@ -24,11 +24,12 @@ RDMAServer::RDMAServer(int port, std::size_t sendBufferSize, std::size_t recvBuf
 
     ec = rdma_create_event_channel();
 
-    rdma_create_id(ec, &conn, nullptr, RDMA_PS_TCP);
-    rdma_bind_addr(conn, (sockaddr *) &addr);
-    rdma_listen(conn, 10); // Arbitrary backlog 10
+    rdma_create_id(ec, &listenerConn, nullptr, RDMA_PS_TCP);
+    rdma_bind_addr(listenerConn, (sockaddr *) &addr);
+    rdma_listen(listenerConn, 10); // Arbitrary backlog 10
+    fmt::print("Created listener rdma_cm_id {}\n", (void *) listenerConn);
 
-    uint16_t portRes = ntohs(rdma_get_src_port(conn));
+    uint16_t portRes = ntohs(rdma_get_src_port(listenerConn));
     fmt::print("Listening on port {}\n", portRes);
 
     eventLoop = std::make_unique<BreakableEventLoop>(ec, [this](const rdma_cm_event &e) { on_event(e); });
@@ -39,11 +40,18 @@ RDMAServer::RDMAServer(int port, std::size_t sendBufferSize, std::size_t recvBuf
 RDMAServer::~RDMAServer() {
     fmt::print("Stopping RDMAServer\n");
 
-    fmt::print("Disconnecting\n");
-    rdma_disconnect(conn);
+    if (clientConn != nullptr) {
+        fmt::print("Disconnecting client\n");
+        rdma_disconnect(clientConn);
+        fmt::print("Destroying client connection id\n");
+        rdma_destroy_id(clientConn);
+    }
 
-    fmt::print("Destroying ID\n");
-    rdma_destroy_id(conn);
+    fmt::print("Disconnecting listner\n");
+    rdma_disconnect(listenerConn);
+
+    fmt::print("Destroying listener ID\n");
+    rdma_destroy_id(listenerConn);
 
     eventLoop.reset();
 
@@ -56,7 +64,7 @@ RDMAServer::~RDMAServer() {
 }
 
 bool RDMAServer::on_event(const rdma_cm_event &event) {
-    fmt::print("Received event {}\n", rdma_event_str(event.event));
+    fmt::print("Received event {} from rdma_cm_id {}\n", rdma_event_str(event.event), (void *) event.id);
     switch (event.event) {
         case RDMA_CM_EVENT_CONNECT_REQUEST:
             return on_connect_request(event.id);
@@ -72,22 +80,30 @@ bool RDMAServer::on_event(const rdma_cm_event &event) {
 bool RDMAServer::on_connect_request(gsl::owner<rdma_cm_id *> newConn) {
     fmt::print("Received connect request\n");
     fmt::print("Building completion queue etc\n");
-    if (completionPoller != nullptr) {
-        throw std::runtime_error{"Completion poller already exists"};
+    if (clientConn != nullptr) {
+        throw std::runtime_error{"Connection already exists"};
     } else {
-        conn = newConn;
-        completionPoller = std::make_unique<CompletionPoller>(conn->verbs,
+        clientConn = newConn;
+        fmt::print("Creating completion poller for IB context of rdma_cm_id {}\n", (void *) clientConn);
+        completionPoller = std::make_unique<CompletionPoller>(clientConn->verbs,
                                                               [this](const auto &wc) { on_completion(wc); });
     }
 
-    protectionDomain = ibv_alloc_pd(conn->verbs);
+    fmt::print("Creating protection domain for connection {}", (void*) clientConn);
+    protectionDomain = ibv_alloc_pd(clientConn->verbs);
 
 
+    fmt::print("Creating queue pair for rdma_cm_id {}\n", (void *) clientConn);
     ibv_qp_init_attr qp_attr = build_qp_attr(completionPoller->cq);
-    rdma_create_qp(conn, protectionDomain, &qp_attr); //TODO: PD
+    if (rdma_create_qp(clientConn, protectionDomain, &qp_attr) != 0) {
+        throw std::runtime_error{fmt::format("Error creating queue pair: {}", strerror(errno))};
+    }
     post_receives();
     rdma_conn_param cm_params{};
-    rdma_accept(conn, &cm_params);
+    fmt::print("Accepting connection {}\n", (void *) clientConn);
+    if (rdma_accept(clientConn, &cm_params) != 0) {
+        throw std::runtime_error{fmt::format("Error accepting connection: {}", strerror(errno))};
+    }
     return false;
 }
 
@@ -96,7 +112,7 @@ bool RDMAServer::on_disconnect() {
     completionPoller.reset();
     ibv_dealloc_pd(protectionDomain);
     fmt::print("Destroy RDMA communication identifier\n");
-    rdma_destroy_id(conn);
+    rdma_destroy_id(clientConn); // TODO: Pass client connection via parameter
     return false;
 }
 
@@ -107,6 +123,7 @@ bool RDMAServer::on_connection() {
 
 
 void RDMAServer::on_completion(const ibv_wc &wc) {
+    fmt::print("Received work completion with opcode {}\n", wc.opcode);
     if (wc.status != IBV_WC_SUCCESS) {
         throw std::runtime_error{fmt::format("on_completion: status is not success: {}", ibv_wc_status_str(wc.status))};
     }
@@ -138,8 +155,8 @@ void RDMAServer::post_receives() {
     wr.num_sge = 1;
 
     ibv_recv_wr *bad_wr = nullptr;
-    fmt::print("Posting receive with size {}\n", sge.length);
-    ibv_post_recv(conn->qp, &wr, &bad_wr);;
+    fmt::print("Posting receive with size {} to rdma_cm_id {}\n", sge.length, (void *) clientConn);
+    ibv_post_recv(clientConn->qp, &wr, &bad_wr);;
     markInFlightRecv(std::move(b));
 }
 
@@ -160,7 +177,7 @@ void RDMAServer::send(Buffer<char> &&b) {
 
     ibv_send_wr *bad_wr = nullptr;
     fmt::print("Posting send request for result\n");
-    ibv_post_send(conn->qp, &wr, &bad_wr);
+    ibv_post_send(clientConn->qp, &wr, &bad_wr);
     markInFlightSend(std::move(b));
 }
 

@@ -114,7 +114,10 @@ bool RDMAClient::on_address_resolved() {
 
     fmt::print("Creating queue pair\n");
     ibv_qp_init_attr qp_attr = build_qp_attr(completionPoller->cq);
-    rdma_create_qp(conn, protectionDomain, &qp_attr);
+    if (rdma_create_qp(conn, protectionDomain, &qp_attr) != 0) {
+        throw std::runtime_error{fmt::format("Error creating QP: {}", strerror(errno))};
+
+    }
 
     post_receives();
 
@@ -173,20 +176,32 @@ void RDMAClient::send(Buffer<char> &&b) {
     fmt::print("Sending\n");
 
     ibv_sge sge{};
-    sge.addr = reinterpret_cast<uint64_t>(b.getMR());
+    sge.addr = reinterpret_cast<uint64_t>(b.data());
     sge.length = getSendSize();
     sge.lkey = b.getMR()->lkey;
 
     ibv_send_wr wr{};
-    wr.opcode = IBV_WR_SEND; // Send request that must match a corresponding receive request on the peer
     wr.wr_id = reinterpret_cast<uint64_t>(b.data());
+    wr.opcode = IBV_WR_SEND; // Send request that must match a corresponding receive request on the peer
     wr.sg_list = &sge;
     wr.num_sge = 1;
     wr.send_flags = IBV_SEND_SIGNALED; // We want complete notification for this send request
 
     ibv_send_wr *bad_wr = nullptr;
     fmt::print("posting send with size {}\n", sge.length);
-    ibv_post_send(conn->qp, &wr, &bad_wr);
+    auto send_result = ibv_post_send(conn->qp, &wr, &bad_wr);
+    switch (send_result) {
+        case 0:
+            break;
+        case EINVAL:
+            throw std::runtime_error{"Invalid value provided in wr"};
+        case ENOMEM:
+            throw std::runtime_error{"Send Queue is full or not enough resources to complete this operation"};
+        case EFAULT:
+            throw std::runtime_error{"Invalid value provided in qp"};
+        default:
+            throw std::runtime_error{fmt::format("Error posting send WR: {} {}", send_result, strerror(send_result))};
+    }
 
     markInFlightSend(std::move(b));
 }

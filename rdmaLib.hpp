@@ -17,16 +17,6 @@ constexpr auto WIDTH = 1920;
 constexpr auto HEIGHT = 1080;
 constexpr auto BUFFER_SIZE = WIDTH * HEIGHT;
 
-/*
-struct ServerConnection {
-    ibv_qp *qp;
-    ibv_mr *send_mr;
-    ibv_mr *recv_mr;
-    std::vector<char> recv_region;
-    std::vector<char> send_region;
-};
-*/
-
 class CompletionPoller {
     public:
         using WCCallback = std::function<void(const ibv_wc &wc)>;
@@ -35,8 +25,8 @@ class CompletionPoller {
 
         ~CompletionPoller();
 
-        gsl::owner<ibv_cq *> cq;
         gsl::owner<ibv_comp_channel *> comp_channel;
+        gsl::owner<ibv_cq *> cq;
     private:
         std::thread cq_poller_thread; // TODO: properly join this thread
         WCCallback workCompletionCallback;

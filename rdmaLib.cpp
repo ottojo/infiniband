@@ -33,6 +33,7 @@ CompletionPoller::CompletionPoller(ibv_context *ibvContext, WCCallback workCompl
     // TODO: join/cancel this? May need to poll instead of get_cq_event
     cq_poller_thread = std::thread([this]() {
         while (true) {
+            fmt::print("Completion poller\n");
             ibv_cq *wcQueue = nullptr;
             void *wcContext = nullptr;
             // Wait for next completion event in the channel
@@ -40,7 +41,7 @@ CompletionPoller::CompletionPoller(ibv_context *ibvContext, WCCallback workCompl
 
             // Expect all events in this channel to come from our queue/context
             assert(wcQueue == cq);
-            assert(wcContext == this);
+            //assert(wcContext == this); //TODO:REMOVE
 
             // TODO: Verify handling of multiple events in queue (ack all, poll all? do we get 1 event per WC?)
             // Acknowledge completion event
@@ -53,6 +54,7 @@ CompletionPoller::CompletionPoller(ibv_context *ibvContext, WCCallback workCompl
                 this->workCompletionCallback(wc);
             }
         }
+        fmt::print("Completion poller dead\n");
     });
 }
 
