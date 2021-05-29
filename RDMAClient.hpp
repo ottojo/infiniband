@@ -14,6 +14,7 @@
 #include "rdmaLib.hpp"
 #include "BreakableEventLoop.hpp"
 #include "BufferSet.hpp"
+#include "CompletionPoller.hpp"
 #include <map>
 #include <queue>
 
@@ -45,7 +46,7 @@ class RDMAClient : public BufferSet {
 
         ReceiveCallback receiveCallback;
 
-        std::unique_ptr<BreakableEventLoop> eventLoop;
+        std::unique_ptr<BreakableFDWait> eventLoop;
 
         std::promise<bool> connectedPromise;
 

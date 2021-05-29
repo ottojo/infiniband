@@ -2,7 +2,6 @@
 // Created by jonas on 22.05.21.
 //
 
-#include "utils.hpp"
 #include <stdexcept>
 #include <fmt/format.h>
 #include <utility>
@@ -10,7 +9,6 @@
 #include "RDMAServer.hpp"
 #include "rdmaLib.hpp"
 #include <sys/eventfd.h>
-#include <unistd.h>
 
 RDMAServer::RDMAServer(int port, std::size_t sendBufferSize, std::size_t recvBufferSize,
                        std::function<void()> onConnect,
@@ -89,7 +87,7 @@ bool RDMAServer::on_connect_request(gsl::owner<rdma_cm_id *> newConn) {
                                                               [this](const auto &wc) { on_completion(wc); });
     }
 
-    fmt::print("Creating protection domain for connection {}", (void*) clientConn);
+    fmt::print("Creating protection domain for connection {}", (void *) clientConn);
     protectionDomain = ibv_alloc_pd(clientConn->verbs);
 
 

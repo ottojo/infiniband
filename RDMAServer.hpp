@@ -12,6 +12,7 @@
 #include "rdmaLib.hpp"
 #include "BreakableEventLoop.hpp"
 #include "BufferSet.hpp"
+#include "CompletionPoller.hpp"
 
 class RDMAServer : public BufferSet {
     public:

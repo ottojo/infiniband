@@ -12,7 +12,8 @@
 #include "rdmaLib.hpp"
 #include "RDMAClient.hpp"
 
-std::chrono::high_resolution_clock::time_point sendTime;
+
+std::promise<bool> programEnd;
 
 std::unique_ptr<RDMAClient> client;
 
@@ -21,7 +22,9 @@ void onReceive(const ibv_wc &wc, Buffer<char> &b) {
     cv::Mat inputMatrix(HEIGHT, WIDTH, CV_8UC1, (void *) b.data());
     cv::imshow("circle", inputMatrix);
     while (cv::waitKey(1) != 27);
+    cv::destroyWindow("circle");
     client->returnBuffer(std::move(b));
+    programEnd.set_value(true);
 }
 
 int main(int argc, char *argv[]) {
@@ -45,7 +48,7 @@ int main(int argc, char *argv[]) {
         client->send(std::move(b));
     }
 
-    std::this_thread::sleep_for(std::chrono::hours{100000});
+    programEnd.get_future().wait();
 
     return 0;
 }
