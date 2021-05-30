@@ -31,7 +31,7 @@ class RDMAServer : public BufferSet {
 
         std::unique_ptr<BreakableEventLoop> eventLoop;
 
-        rdma_event_channel *ec = nullptr;
+        gsl::owner<rdma_event_channel *> ec;
 
         gsl::owner<ibv_pd *> protectionDomain;
 

@@ -5,22 +5,44 @@ set(CMAKE_CXX_STANDARD 20)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/modules/")
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Ofast -march=native -mtune=native")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O1 -g")
 
 find_package(fmt REQUIRED)
 find_package(verbs REQUIRED)
 find_package(Microsoft.GSL CONFIG)
-find_package(Boost REQUIRED) # stlinterfaces
 find_library(RDMACM rdmacm REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(Backward REQUIRED)
+find_library(BFD bfd REQUIRED)
+find_library(UNWIND unwind REQUIRED)
 
-#add_executable(infiniband main.cpp IBvContext.cpp IBvDeviceList.cpp libibverbs_format.hpp IBvProtectionDomain.cpp IBvCompletionQueue.cpp IBvCompletionQueue.hpp IBvCompletionEventChannel.cpp IBvCompletionEventChannel.hpp QueuePair.cpp QueuePair.hpp IBvException.cpp IBvException.hpp IBvMemoryRegion.hpp RDMAEventChannel.cpp RDMAEventChannel.h IBConnection.cpp IBConnection.h RDMACmID.cpp RDMACmID.hpp)
-#target_link_libraries(infiniband PRIVATE IBVerbs::verbs fmt::fmt Microsoft.GSL::GSL pthread rdmacm)
-#target_compile_options(infiniband PRIVATE -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers)
+set(SOURCES_COMMON
+        rdmaLib.cpp
+        utils.cpp
+        BreakableEventLoop.cpp
+        BreakableFDWait.cpp
+        BufferSet.cpp
+        CompletionPoller.cpp
+        backward.cpp
+        )
 
-add_executable(rdmaTestServer rdmaTestServer.main.cpp rdmaLib.cpp RDMAServer.cpp utils.cpp BreakableEventLoop.cpp BreakableFDWait.cpp BufferSet.cpp CompletionPoller.cpp)
+set(SOURCES_SERVER
+        ${SOURCES_COMMON}
+        RDMAServer.cpp
+        rdmaTestServer.main.cpp
+        )
+
+add_executable(rdmaTestServer ${SOURCES_SERVER})
 target_include_directories(rdmaTestServer PRIVATE ${OpenCV_INCLUDE_DIRS})
-target_link_libraries(rdmaTestServer PRIVATE fmt::fmt IBVerbs::verbs pthread rdmacm ${OpenCV_LIBS})
+target_link_libraries(rdmaTestServer PRIVATE fmt::fmt IBVerbs::verbs pthread rdmacm ${OpenCV_LIBS} Backward::Backward)
 
+set(SOURCES_CLIENT
+        ${SOURCES_COMMON}
+        RDMAClient.cpp
+        rdmaTestClient.main.cpp
+        )
 
-add_executable(rdmaTestClient rdmaTestClient.main.cpp rdmaLib.cpp RDMAClient.cpp utils.cpp BreakableEventLoop.cpp BreakableFDWait.cpp BufferSet.cpp CompletionPoller.cpp)
-target_link_libraries(rdmaTestClient PRIVATE fmt::fmt IBVerbs::verbs pthread rdmacm ${OpenCV_LIBS})
+add_executable(rdmaTestClient ${SOURCES_CLIENT})
+target_link_libraries(rdmaTestClient PRIVATE fmt::fmt IBVerbs::verbs pthread rdmacm ${OpenCV_LIBS} Backward::Backward)

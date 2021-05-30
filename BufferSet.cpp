@@ -47,7 +47,7 @@ std::size_t BufferSet::getRecvSize() const {
     return recv_size;
 }
 
-BufferSet::BufferSet(std::size_t sendSize, std::size_t recvSize) : send_size(sendSize), recv_size(recvSize) {}
+BufferSet::BufferSet(std::size_t sendSize, std::size_t recvSize) : recv_size(recvSize), send_size(sendSize) {}
 
 void BufferSet::markInFlightSend(Buffer<char> &&b) {
     inFlightSendBuffers.emplace(b.data(), std::move(b));
@@ -69,4 +69,15 @@ Buffer<char> BufferSet::findSendBuffer(char *key) {
     auto buffer = std::move(inFlightSendBuffers.at(key));
     inFlightSendBuffers.erase(key);
     return buffer;
+}
+
+void BufferSet::clearBuffers() {
+    {
+        decltype(sendBufferPool) empty;
+        std::swap(sendBufferPool, empty);
+    }
+    {
+        decltype(receiveBufferPool) empty;
+        std::swap(receiveBufferPool, empty);
+    }
 }

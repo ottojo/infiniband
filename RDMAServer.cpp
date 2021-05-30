@@ -15,12 +15,11 @@ RDMAServer::RDMAServer(int port, std::size_t sendBufferSize, std::size_t recvBuf
                        std::function<void(Buffer<char> &&b)> onReceive) :
         BufferSet(sendBufferSize, recvBufferSize),
         connectCallback(std::move(onConnect)),
-        receiveCallback(std::move(onReceive)) {
+        receiveCallback(std::move(onReceive)),
+        ec(rdma_create_event_channel()) {
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-
-    ec = rdma_create_event_channel();
 
     rdma_create_id(ec, &listenerConn, nullptr, RDMA_PS_TCP);
     rdma_bind_addr(listenerConn, (sockaddr *) &addr);
@@ -65,10 +64,13 @@ bool RDMAServer::on_event(const rdma_cm_event &event) {
     fmt::print("Received event {} from rdma_cm_id {}\n", rdma_event_str(event.event), (void *) event.id);
     switch (event.event) {
         case RDMA_CM_EVENT_CONNECT_REQUEST:
+            Expects(event.listen_id == listenerConn);
             return on_connect_request(event.id);
         case RDMA_CM_EVENT_ESTABLISHED:
+            Expects(event.id == clientConn);
             return on_connection();
         case RDMA_CM_EVENT_DISCONNECTED:
+            Expects(event.id == clientConn);
             return on_disconnect();
         default:
             throw std::runtime_error{fmt::format("Unknown event: {} ({})", event.event, rdma_event_str(event.event))};
@@ -78,8 +80,9 @@ bool RDMAServer::on_event(const rdma_cm_event &event) {
 bool RDMAServer::on_connect_request(gsl::owner<rdma_cm_id *> newConn) {
     fmt::print("Received connect request\n");
     fmt::print("Building completion queue etc\n");
+
     if (clientConn != nullptr) {
-        throw std::runtime_error{"Connection already exists"};
+        throw std::runtime_error{"Connection already exists"}; // TODO: multiple connections
     } else {
         clientConn = newConn;
         fmt::print("Creating completion poller for IB context of rdma_cm_id {}\n", (void *) clientConn);
@@ -88,8 +91,9 @@ bool RDMAServer::on_connect_request(gsl::owner<rdma_cm_id *> newConn) {
     }
 
     fmt::print("Creating protection domain for connection {}", (void *) clientConn);
-    protectionDomain = ibv_alloc_pd(clientConn->verbs);
-
+    protectionDomain = ibv_alloc_pd(
+            clientConn->verbs); // TODO: Clear buffers associated with old PD when overwriting, as those cant be used with new client
+    clearBuffers();
 
     fmt::print("Creating queue pair for rdma_cm_id {}\n", (void *) clientConn);
     ibv_qp_init_attr qp_attr = build_qp_attr(completionPoller->cq);
@@ -111,6 +115,7 @@ bool RDMAServer::on_disconnect() {
     ibv_dealloc_pd(protectionDomain);
     fmt::print("Destroy RDMA communication identifier\n");
     rdma_destroy_id(clientConn); // TODO: Pass client connection via parameter
+    clientConn = nullptr;
     return false;
 }
 
@@ -180,5 +185,6 @@ void RDMAServer::send(Buffer<char> &&b) {
 }
 
 Buffer<char> RDMAServer::getSendBuffer() {
+    // TODO: Handle multiple buffers for PDs
     return BufferSet::getSendBuffer().value_or(Buffer<char>(getSendSize(), protectionDomain));
 }

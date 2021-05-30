@@ -38,6 +38,8 @@ class BufferSet {
 
         Buffer<char> findSendBuffer(char *key);
 
+        void clearBuffers();
+
 
     private:
         std::queue<Buffer<char>> sendBufferPool;
